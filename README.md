@@ -1,2 +1,3 @@
 # nifi_processors
-Java code for Apache Nifi processors
+An Apache Nifi processor for using the Apache Velocity template engine to format flowfile content.
+
