@@ -1,4 +1,4 @@
-package com.datamelt.nifi.test;
+package com.datamelt.nifi.processors;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -27,14 +27,30 @@ import org.apache.nifi.processor.io.InputStreamCallback;
 import org.apache.nifi.processor.util.StandardValidators;
 
 /**
- * This Apache Nifi processor will allow to split the incoming data from a flowfile
+ * This Apache Nifi processor will allow to split the incoming content of a flowfile
  * into separate fields using a defined separator.
  * 
  * The values of the individual fields will be assigned to flowfile attributes. Each attribute
- * is named using the defined field prefix plus a running number.
+ * is named using the defined field prefix plus the positional number of the field.
  * 
- * A number format can optionally be specified which is formatted using the DecimalFormat class.
- *
+ * A number format can optionally be specified to format the column number. The number format needs 
+ * to be according to the Java DecimalFormat class.
+ * 
+ * 
+ * Example:
+ * 
+ * A flow file with following content:
+ * 
+ * Peterson, Jenny, New York, USA
+ * 
+ * When the field prefix is set to "column_" and the field number format is set to "000" the result will be 4 attributes:
+ * 
+ * column_000 = Peterson
+ * column_001 = Jenny
+ * column_002 = New York
+ * column_003 = USA
+ * 
+ * 
  * @author uwe geercken - last update 2016-03-19
  */
 
@@ -42,7 +58,7 @@ import org.apache.nifi.processor.util.StandardValidators;
 @Tags({"CSV", "attributes", "split"})
 @CapabilityDescription("Splits the content from a flowfile into individual columns. The resulting attribute contains field prefix plus the column positional number and the value from the content as an attribute.")
 
-public class CsvToAttributeProcessor extends AbstractProcessor
+public class SplitToAttribute extends AbstractProcessor
 {
     private List<PropertyDescriptor> properties;
     private Set<Relationship> relationships;

@@ -1,2 +1,2 @@
-com.datamelt.nifi.test.ProcessTemplate
-com.datamelt.nifi.test.CsvToAttributeProcessor
+com.datamelt.nifi.processors.MergeTemplate
+com.datamelt.nifi.processors.SplitToAttribute

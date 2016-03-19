@@ -1,4 +1,4 @@
-package com.datamelt.nifi.test;
+package com.datamelt.nifi.processors;
 
 /*
  * To change this license header, choose License Headers in Project Properties.
@@ -42,7 +42,7 @@ import org.apache.velocity.app.VelocityEngine;
  * This processor for Apache Nifi will allow to merge the attributes from a flowfile with an Apache Velocity template. The Velocity template
  * contains placeholders (e.g. $column0 - alternatively in brackets: ${column0}).
  * 
- * In the merge process the attributes of the flowfile will be merged with the template and the placeholders are replaced with the attribute values.
+ * In the merge process the attributes of the flowfile will be merged with the template placeholders which are replaced with the attribute values.
  * 
  * See the Apache Velocity website at http://velocity.apache.org for details on the template engine. 
  * 
@@ -89,7 +89,7 @@ import org.apache.velocity.app.VelocityEngine;
 @Tags({"Template Engine", "Template", "Apache Velocity", "CSV", "format", "convert"})
 @CapabilityDescription("Takes the attributes of a flowfile, merges them with an Apache Velocity template and replaces the content of the flowfile with the result. Specifying the name of an attribute in the template - using following format: $<attribute name> (example: $column_001) - will replace this placeholder with the actual value from the attribute.")
 
-public class ProcessTemplate extends AbstractProcessor
+public class MergeTemplate extends AbstractProcessor
 {
    
     private List<PropertyDescriptor> properties;
