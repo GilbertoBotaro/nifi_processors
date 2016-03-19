@@ -1,6 +1,7 @@
 # nifi_processors
 
-Th SplitToAttribute processor for Apache Nifi will allow to split the incoming content of a flowfile into separate fields using a defined separator.
+1)
+The SplitToAttribute processor for Apache Nifi will allow to split the incoming content of a flowfile into separate fields using a defined separator.
 
 The values of the individual fields will be assigned to flowfile attributes. Each attribute is named using the defined field prefix plus the positional number of the field.
 
@@ -20,7 +21,7 @@ column_001 = Jenny
 column_002 = New York
 column_003 = USA
 
-
+2)
 The MergeTemplate processor for Apache Nifi will allow to merge the attributes from a flowfile with an Apache Velocity template. The Velocity template contains placeholders (e.g. $column0 - alternatively in brackets: ${column0}). 
 
 In the merge process the attributes of the flowfile will be merged with the template and the placeholders are replaced with the attribute values.
