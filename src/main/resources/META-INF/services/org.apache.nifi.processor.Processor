@@ -1,1 +1,2 @@
-com.datamelt.nifi.test.TemplateProcessor
+com.datamelt.nifi.test.ProcessTemplate
+com.datamelt.nifi.test.CsvToAttributeProcessor

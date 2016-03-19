@@ -14,10 +14,10 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
-import org.apache.commons.io.IOUtils;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.logging.ProcessorLog;
@@ -38,27 +38,29 @@ import org.apache.nifi.processor.util.StandardValidators;
 import org.apache.velocity.Template;
 import org.apache.velocity.VelocityContext;
 import org.apache.velocity.app.VelocityEngine;
-
 /**
- * This processor for Apache Nifi will allow to merge the incomming data from a flowfile
- * with an Apache Velocity template.
+ * This processor for Apache Nifi will allow to merge the attributes from a flowfile with an Apache Velocity template. The Velocity template
+ * contains placeholders (e.g. $column0 - alternatively in brackets: ${column0}).
  * 
- * The Velocity template contains placeholders (e.g. $column0 - also alternatively in brackets: ${column0}).
- * The data will be merged with the template and the placeholders are replaced with the real data/values.
+ * In the merge process the attributes of the flowfile will be merged with the template and the placeholders are replaced with the attribute values.
  * 
- * This is done by splitting the incomming data into separate fields using a given field separator. Then
- * each resulting field will be named using the given field prefix and a running number. If the field prefix
- * is e.g. "column" and there are 3 fields then these are named: column0, column1 and column2. In the Velocity
- * template use these column names as $column0, $column1 and $column2.
+ * See the Apache Velocity website at http://velocity.apache.org for details on the template engine. 
+ * 
+ * A filter (regular expression) has to be specified, defining which attributes shall be considered for the template engine. The original file is
+ * be routed to the "original" relation and the result of the merge process replaces the content of the flowfile and is routed to the "merged"
+ * relationship.
+ *
  * 
  * Example:
- * In the processor the field seperator is set to "," (comma). The field prefix is defined as "column".
  *  
- * A flow file with following data:
+ * A flow file with following attributes:
  * 
- *  Peterson, Jenny, New York, USA
+ *  column0 = Peterson
+ *  column1 = Jenny
+ *  column2 = New York
+ *  column3 = USA
  *  
- * A template file "names.vm" with follwoing format:
+ * A template file "names.vm" with below format. Placeholders start with a dollar sign and are optionally in curly brackets:
  * 
  * {
  * 		"name": "$column0",
@@ -67,8 +69,8 @@ import org.apache.velocity.app.VelocityEngine;
  * 		"country": "$column3"
  * }
  * 
- * After the data is merged, the placeholders in the template file are replaced with the real data from the
- * flowfile. This is the result:
+ * After the attributes are merged with the template, the placeholders in the template are replaced with the values from the
+ * flowfile attributes. This is the result:
  * 
  * {
  * 		"name": "Peterson",
@@ -78,14 +80,16 @@ import org.apache.velocity.app.VelocityEngine;
  * }
  *
  * Can be used for any textual data formats such as CSV, HTML, XML, Json, etc.
+ * 
+ * 
  *
- * @author uwe geercken - last update 2016-03-17
+ * @author uwe geercken - last update 2016-03-19
  */
 @SideEffectFree
-@Tags({"Template Engine", "Template", "Apache Velocity", "CSV", "format"})
-@CapabilityDescription("Use an Apache Velocity template to convert data from a CSV file into a different format. Data is split into fields using the [Field separator] property. The resulting fields are available as [Field prefix] plus the running number of the field. E.g. if the [Field prefix] property is set to \"column\" then the fields are available as column0, column 1, column3, etc. In the Apache Velocity Template use then $column0, $column1, $column2, etc as placeholders. The data from the flowfile with be inserted into the template where the placeholders are.")
+@Tags({"Template Engine", "Template", "Apache Velocity", "CSV", "format", "convert"})
+@CapabilityDescription("Takes the attributes of a flowfile, merges them with an Apache Velocity template and replaces the content of the flowfile with the result. Specifying the name of an attribute in the template - using following format: $<attribute name> (example: $column_001) - will replace this placeholder with the actual value from the attribute.")
 
-public class TemplateProcessor extends AbstractProcessor
+public class ProcessTemplate extends AbstractProcessor
 {
    
     private List<PropertyDescriptor> properties;
@@ -97,45 +101,54 @@ public class TemplateProcessor extends AbstractProcessor
     
     public static final String MATCH_ATTR = "match";
     
+    private static final String PROPERTY_TEMPLATE_PATH_NAME = "Template path";
+    private static final String PROPERTY_TEMPLATE_NAME_NAME = "Template name";
+    
+    private static final String PROPERTY_ATTRIBUTE_FILTER_DEFAULT = ".*";
+
+    
     // tell velocity to load a template from a path
     private static final String RESOURCE_PATH = "file.resource.loader.path";
     
     public static final PropertyDescriptor TEMPLATE_PATH = new PropertyDescriptor.Builder()
-            .name("Template path")
+            .name(PROPERTY_TEMPLATE_PATH_NAME)
             .required(true)
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
-            .description("Specify the path to the folder where the Apache Velocity template file is located.")
+            .description("Specify the path to the folder where the Apache Velocity template file is located. Multiple path may be specified by deviding them with a comma.")
             .build();
     
     public static final PropertyDescriptor TEMPLATE_NAME = new PropertyDescriptor.Builder()
-            .name("Template name")
+            .name(PROPERTY_TEMPLATE_NAME_NAME)
             .required(true)
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
             .description("Specify the name of the Apache Velocity template file - without the path information.")
             .build();
     
-    public static final PropertyDescriptor FIELD_PREFIX = new PropertyDescriptor.Builder()
-            .name("Field prefix")
+    public static final PropertyDescriptor ATTRIBUTE_FILTER = new PropertyDescriptor.Builder()
+            .name("Attribute Filter")
             .required(true)
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
-            .description("Specify which String is used to prefix the individual fields. If the prefix is e.g. \"column\" then the fields will be named: \"column0\", \"column1\",\"column2\", etc. These names must correspond to the placeholders used in the Apache Velocity template. In the template you would use \"$column0\", \"$column1\", \"$column2\", etc.")
+            .defaultValue(PROPERTY_ATTRIBUTE_FILTER_DEFAULT)
+            .description("Specify a filter in the form of a regular expression for the attributes to include.")
             .build();
     
-    public static final PropertyDescriptor FIELD_SEPARATOR = new PropertyDescriptor.Builder()
-            .name("Field separator")
-            .required(true)
-            .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
-            .description("Specify the field seperator of the incomming flow file. This is usually a comma or semicolon. The process will split the flowfile into fields using this separator")
+    public static final Relationship MERGED = new Relationship.Builder()
+            .name("merged")
+            .description("The result of the merge of attributes with the template will be routed to this destination")
             .build();
     
-    public static final Relationship SUCCESS = new Relationship.Builder()
-            .name("success")
-            .description("The flowfile content was successfully merged with the template")
+    public static final Relationship ORIGINAL = new Relationship.Builder()
+            .name("original")
+            .description("The original input file will be routed to this destination")
             .build();
     
     @OnScheduled
     public void initialize(final ProcessContext context)
     {
+    	final ProcessorLog log = this.getLogger();
+    	
+    	try
+        {
     	// Apache Velocity Template Engine
         velocityEngine = new VelocityEngine();
         
@@ -148,6 +161,13 @@ public class TemplateProcessor extends AbstractProcessor
         
         // get the template from the given path
         template = velocityEngine.getTemplate(context.getProperty(TEMPLATE_NAME).getValue());
+        }
+    	catch(Exception ex)
+        {
+            ex.printStackTrace();
+            log.error("Failed to initialize the Apache Velocity template engine for template: " + context.getProperty(TEMPLATE_NAME).getValue() + ", in path: " +context.getProperty(TEMPLATE_PATH).getValue() );
+        }
+    	
     }
     
     @OnStopped
@@ -163,24 +183,27 @@ public class TemplateProcessor extends AbstractProcessor
         List<PropertyDescriptor> properties = new ArrayList<>();
         properties.add(TEMPLATE_PATH);
         properties.add(TEMPLATE_NAME);
-        properties.add(FIELD_PREFIX);
-        properties.add(FIELD_SEPARATOR);
+        properties.add(ATTRIBUTE_FILTER);
         this.properties = Collections.unmodifiableList(properties);
         
         Set<Relationship> relationships = new HashSet<>();
-        relationships.add(SUCCESS);
+        relationships.add(MERGED);
+        relationships.add(ORIGINAL);
         this.relationships = Collections.unmodifiableSet(relationships);
-        
     }
     
     @Override
-    public void onTrigger(final ProcessContext context, final ProcessSession session) throws ProcessException {
+    public void onTrigger(final ProcessContext context, final ProcessSession session) throws ProcessException 
+    {
         final ProcessorLog log = this.getLogger();
+    
         final AtomicReference<String> value = new AtomicReference<>();
         
         FlowFile flowfile = session.get();
         
+        final FlowFile original = session.clone(flowfile);
         
+        final Map<String, String> attributes = flowfile.getAttributes();
         
         session.read(flowfile, new InputStreamCallback() 
         {
@@ -189,64 +212,38 @@ public class TemplateProcessor extends AbstractProcessor
             {
                 try
                 {
-                    String row = IOUtils.toString(in);
-
-                    /**
-                     * Split the row into separate fields using the FIELD_SEPARATOR property
-                     */
-            		String[] fields = row.split(context.getProperty(FIELD_SEPARATOR).getValue());
-            		
-            		/**
-            		 * to results of the merge with the template are written to this StringWriter
-            		 */
+            		 // to results of the merge with the template are written to this StringWriter
             		StringWriter writer = new StringWriter();
 
-            		/**
-            		 * Create a context which will hold the variables
-            		 */
+            		// Create a context which will hold the variables
             		VelocityContext velocityContext = new VelocityContext();
             		
-            		/**
-            		 * loop over the fields
-            		 */
-            		if(fields!=null && fields.length>0)
+            		// filter the entries based on the given attribute filter
+            		String attributesFilter = context.getProperty(ATTRIBUTE_FILTER).getValue();
+            		
+            		// loop over the map of attributes
+            		for (Map.Entry<String, String> entry : attributes.entrySet()) 
             		{
-	            		for(int i=0;i<fields.length;i++)
-	            		{
-	            			/**
-	            			 * put each field value in the velocity context. the name of the variable will be the
-	            			 * defined field prefix plus a running number of the field.
-	            			 */
-	            			velocityContext.put(context.getProperty(FIELD_PREFIX).getValue() +i, fields[i].trim());
-	            		}
+            			if(entry.getKey().matches(attributesFilter))
+            			{
+            				velocityContext.put(entry.getKey(), entry.getValue());
+            			}
             		}
-
-            		/**
-            		 * merge the template with the context (data/variables)
-            		 */
+            		
+            		// merge the template with the context (data/variables)
             		template.merge(velocityContext,writer);
 
-            		/**
-            		 * set the value to the resulting string
-            		 */
+            		 // set the value to the resulting string
             		value.set(writer.toString());
             		
                 }
                 catch(Exception ex)
                 {
                     ex.printStackTrace();
-                    log.error("Failed to merge data with template: " + context.getProperty(TEMPLATE_NAME).getValue() + ", in path: " +context.getProperty(TEMPLATE_PATH).getValue() );
+                    log.error("Failed to merge attributes with template: " + context.getProperty(TEMPLATE_NAME).getValue() + ", in path: " +context.getProperty(TEMPLATE_PATH).getValue() );
                 }
             }
         });
-        
-        // Write the results to an attribute 
-        final String results = value.get();
-        
-        if(results != null && !results.isEmpty())
-        {
-            flowfile = session.putAttribute(flowfile, "match", results.toString());
-        }
         
         // To write the results back out to flow file 
         flowfile = session.write(flowfile, new OutputStreamCallback() 
@@ -256,11 +253,14 @@ public class TemplateProcessor extends AbstractProcessor
             public void process(OutputStream out) throws IOException 
             {
                 	out.write(value.get().getBytes());
-            
             }
         });
         
-        session.transfer(flowfile, SUCCESS);                                                                                                                                                                                                                                                                                                                                                                                                 
+        // send the merged result here
+        session.transfer(flowfile, MERGED);
+        
+        //send the original flowfile content here
+        session.transfer(original, ORIGINAL);
     }
     
     @Override
