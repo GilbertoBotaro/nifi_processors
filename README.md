@@ -1,5 +1,9 @@
 # nifi_processors
 
+The .nar file available here contains two processors. To use them with Apache Nifi, drop the nar file in the lib folder and restart Nifi.
+
+Be aware that this is my first attempt to write processors for Nifi, so they might not be production ready.
+
 1)
 The SplitToAttribute processor for Apache Nifi will allow to split the incoming content of a flowfile into separate fields using a defined separator.
 
