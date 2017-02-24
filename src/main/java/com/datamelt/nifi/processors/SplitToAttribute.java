@@ -10,11 +10,10 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-
 import org.apache.commons.io.IOUtils;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.flowfile.FlowFile;
-import org.apache.nifi.logging.ProcessorLog;
+import org.apache.nifi.logging.ComponentLog;
 import org.apache.nifi.processor.AbstractProcessor;
 import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.ProcessSession;
@@ -63,6 +62,8 @@ public class SplitToAttribute extends AbstractProcessor {
     private List<PropertyDescriptor> properties;
     private Set<Relationship> relationships;
 
+    private final ComponentLog logger = getLogger();
+    
     // map used to store the attribute name and its value from the content of the flowfile
     private final Map<String, String> propertyMap = new HashMap<>();
 
@@ -73,7 +74,7 @@ public class SplitToAttribute extends AbstractProcessor {
     private static final String PROPERTY_FIELD_SEPERATOR_NAME = "Field separator";
 
     private static final String PROPERTY_FIELD_NUMBER_NUMBERFORMAT_NAME = "Field Number Format";
-    private static final String PROPERTY_FIELD_NUMBER_NUMBERFORMAT_DEFAULT = "000";
+    private static final String PROPERTY_FIELD_NUMBER_NUMBERFORMAT_DEFAULT = "0000";
 
 
     private static final String RELATIONSHIP_SUCESS_NAME = "success";
@@ -122,7 +123,6 @@ public class SplitToAttribute extends AbstractProcessor {
 
     @Override
     public void onTrigger(final ProcessContext context, final ProcessSession session) throws ProcessException {
-        final ProcessorLog logger = getLogger();
 
         // get selected number format for the field number
         String numberFormat = context.getProperty(FIELD_NUMBER_NUMBERFORMAT).getValue();
@@ -172,6 +172,7 @@ public class SplitToAttribute extends AbstractProcessor {
         });
 
         // put the map to the flowfile
+        
         flowFile = session.putAllAttributes(flowFile, propertyMap);
         // for provenance
         session.getProvenanceReporter().modifyAttributes(flowFile);
