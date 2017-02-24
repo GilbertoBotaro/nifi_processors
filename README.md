@@ -1,6 +1,6 @@
 # nifi_processors
 
-The .nar file available here contains two processors. To use them with Apache Nifi, drop the nar file in the lib folder and restart Nifi.
+The .nar file available here contains four processors. To use them with Apache Nifi, drop the nar file in the lib folder and restart Nifi.
 
 Be aware that this is my first attempt to write processors for Nifi, so they might not be production ready.
 
@@ -67,5 +67,17 @@ flowfile attributes. This is the result:
 
 Can be used for any textual data formats such as CSV, HTML, XML, Json, etc.
 
+3) The RuleEngine processor allows to process individual lines from CSV files. It runs business rules against the data and then updates the flowfile
+attributes based on the results of the ruleengine. One can then route the flowfile based on these attributes.
 
-author uwe geercken - last update 2016-03-19
+The processor requires to set the ruleengine project zip file and a separator. The project zip file can be created with the Business Rules Maintenance Tool -
+a web application to construct and orchestrate business logic (business rules). The projects from the web app can be exported and used with the RuleEngine processor.
+When the ruleengine runs, it splits the incomming row of data (the flowfile content) into individual fields. So the separator defines how the fields are separated
+from each other.
+
+The advantage of using this processor and a ruleengine is that the business logic can be defined outside of Nifi. And thus if the logic changes, the flow does NOT
+have to be changed. The ruleengine can be used to define complex business logic. E.g. "Lastname must be XXX and age must be greater than 25 and country must be Germany or France". This would be difficult to model in nifi and would clutter the flow. Managed in the web app the business logic can modified in an agile way and the flow in Nifi
+stays clean and lean.
+
+author uwe geercken - last update 2017-02-24
+
