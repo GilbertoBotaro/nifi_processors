@@ -3,7 +3,7 @@ package com.datamelt.nifi.processors;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.text.DecimalFormat;
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -11,6 +11,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.zip.ZipFile;
 
 import org.apache.commons.io.IOUtils;
@@ -29,10 +30,11 @@ import org.apache.nifi.annotation.lifecycle.OnScheduled;
 import org.apache.nifi.annotation.lifecycle.OnUnscheduled;
 import org.apache.nifi.processor.exception.ProcessException;
 import org.apache.nifi.processor.io.InputStreamCallback;
+import org.apache.nifi.processor.io.OutputStreamCallback;
 import org.apache.nifi.processor.util.StandardValidators;
 
 import com.datamelt.rules.engine.BusinessRulesEngine;
-import com.datamelt.util.Row;
+import com.datamelt.util.RowField;
 import com.datamelt.util.RowFieldCollection;
 import com.datamelt.util.Splitter;
 
@@ -53,7 +55,7 @@ import com.datamelt.util.Splitter;
  */
 
 @SideEffectFree
-@Tags({"CSV", "attributes", "ruleengine", "decision", "logic", "business rules"})
+@Tags({"CSV", "ruleengine", "filter", "decision", "logic", "business rules"})
 @CapabilityDescription("Runs a ruleengine project zip file containing business logic against the flow file content using the Business Rules Engine JaRE."
         + "The flowfile content is expected to be a single row of data in CSV format. This row of data is split into it's individual fields"
 		+ "and then the business logic from the project zip file is applied to the fields."
@@ -62,15 +64,13 @@ import com.datamelt.util.Splitter;
         + "Instead the business logic is updated in the Business Rules maintenance tool and a new project zip file is created. This can be automated."
 		)
 
-public class RuleEngine extends AbstractProcessor {
+public class RuleEngine extends AbstractProcessor 
+{
     private List<PropertyDescriptor> properties;
     private Set<Relationship> relationships;
 
     // the business rules engine to execute business logic against data
     BusinessRulesEngine ruleEngine = null;
-    
-    // map used to store the attribute name and its value from the content of the flowfile
-    private final Map<String, String> propertyMap = new HashMap<>();
     
     //these fields from the results of the ruleengine will be added to the flowfile attributes
     private static final String PROPERTY_RULEENGINE_ZIPFILE_NAME 				= "ruleengine.zipfile";
@@ -82,6 +82,7 @@ public class RuleEngine extends AbstractProcessor {
     private static final String PROPERTY_RULEENGINE_RULES_PASSED 				= "ruleengine.rulesPassed";
     private static final String PROPERTY_RULEENGINE_RULES_FAILED	 			= "ruleengine.rulesFailed";
     private static final String PROPERTY_RULEENGINE_ACTIONS_COUNT 				= "ruleengine.actionsCount";
+    private static final String PROPERTY_RULEENGINE_DATA_MODIFIED 				= "ruleengine.dataModified";
     
     // names/labels of the processor attibutes
     private static final String RULEENGINE_ZIPFILE_PROPERTY_NAME = "Ruleengine Project Zip File";
@@ -105,13 +106,12 @@ public class RuleEngine extends AbstractProcessor {
     
     public static final Relationship SUCCESS = new Relationship.Builder()
             .name(RELATIONSHIP_SUCESS_NAME)
-            .description("The flowfile content was successfully split into individual fields and the ruleengine executed the business logic against the data (fields).")
+            .description("The ruleengine executed the business logic against the flowfile content.")
             .build();
-
+    
     @Override
     public void init(final ProcessorInitializationContext context) 
     {
-        
     	List<PropertyDescriptor> properties = new ArrayList<>();
         properties.add(ATTRIBUTE_RULEENGINE_ZIPFILE);
         properties.add(ATTRIBUTE_FIELD_SEPARATOR);
@@ -125,39 +125,45 @@ public class RuleEngine extends AbstractProcessor {
     @OnScheduled
     public void onScheduled(final ProcessContext context) throws Exception
     {
-    	// get the name of the ruleengine project zip file
-    	String ruleEngineProjectFileName = context.getProperty(ATTRIBUTE_RULEENGINE_ZIPFILE).getValue();
-    	
-    	// put the name of the ruleengine zip file in the list of properties
-        propertyMap.put(PROPERTY_RULEENGINE_ZIPFILE_NAME, ruleEngineProjectFileName );
-        
-        // 
-        File file = new File(ruleEngineProjectFileName);
+        // get the zip file, containing the business rules
+        File file = new File(context.getProperty(ATTRIBUTE_RULEENGINE_ZIPFILE).getValue());
         ZipFile ruleEngineProjectFile = new ZipFile(file);
         getLogger().debug("ope");
         
-        getLogger().info("initialized business rule engine version: " + BusinessRulesEngine.getVersion() + " using " + ruleEngineProjectFileName );
+        getLogger().info("initialized business rule engine version: " + BusinessRulesEngine.getVersion() + " using " + context.getProperty(ATTRIBUTE_RULEENGINE_ZIPFILE).getValue() );
         getLogger().debug("field separator to split row into fields: " + context.getProperty(ATTRIBUTE_FIELD_SEPARATOR).getValue());
         
+        // create ruleengine instance with the zip file
         ruleEngine = new BusinessRulesEngine(ruleEngineProjectFile);
+        
+        // we display the number of rulegroups contained in the zip file
         getLogger().debug("number of rulegroups in project zip file: " + ruleEngine.getNumberOfGroups());
 
+        // we do not want to keep the detailed results 
         ruleEngine.setPreserveRuleExcecutionResults(false);
-
     }
     
     @OnUnscheduled
     public void onUnScheduled(final ProcessContext context) throws Exception
     {
-        ruleEngine = null;
+        // reset the ruleengine instance
+    	ruleEngine = null;
         getLogger().debug("processor unscheduled - set ruleengine object to null");
     }
 
     @Override
     public void onTrigger(final ProcessContext context, final ProcessSession session) throws ProcessException 
     {
+    	// map used to store the attribute name and its value from the content of the flowfile
+        final Map<String, String> propertyMap = new HashMap<>();
+    	
     	// get a logger instance
     	final ComponentLog logger = getLogger();
+    	
+    	final AtomicReference<Boolean> collectionUpdated = new AtomicReference<>();
+    	collectionUpdated.set(false);
+    	
+    	final AtomicReference<String> contentUpdated = new AtomicReference<>();
     	
     	// clear the collections of ruleengine results
     	ruleEngine.getRuleExecutionCollection().clear();
@@ -177,7 +183,7 @@ public class RuleEngine extends AbstractProcessor {
                 try 
                 {
                     // get the flowfile content
-                    String row = IOUtils.toString(in);
+                    String row = IOUtils.toString(in, "UTF-8");
                     logger.debug("read flowfile content" + row);
                     // check that we have data
                     if (row != null && !row.trim().equals("")) {
@@ -189,7 +195,7 @@ public class RuleEngine extends AbstractProcessor {
 
                 		// convert the fields of the CSV file into a collection
                 		// the given field separator is used to split the incoming data into fields
-        		        RowFieldCollection collection = new RowFieldCollection(splitter.getFields(row));
+                		RowFieldCollection collection = new RowFieldCollection(splitter.getFields(row));
         		        logger.debug("created RowFieldCollection object: " + collection.getNumberOfFields() + " number of fields");
 
         		        logger.debug("running business ruleengine...");
@@ -205,6 +211,9 @@ public class RuleEngine extends AbstractProcessor {
         		        logger.debug("number of rules passed: " + ruleEngine.getNumberOfRulesPassed());
         		        logger.debug("number of rules failed: " + ruleEngine.getNumberOfRulesFailed());
         		        logger.debug("number of actions: " + ruleEngine.getNumberOfActions());
+        		    	
+        		    	// put the name of the ruleengine zip file in the list of properties
+        		        propertyMap.put(PROPERTY_RULEENGINE_ZIPFILE_NAME, context.getProperty(ATTRIBUTE_RULEENGINE_ZIPFILE).getValue() );
         		        
         		        // put the total number of  rulegroups in the property map
         		        propertyMap.put(PROPERTY_RULEENGINE_RULEGROUPS_COUNT, ""+ ruleEngine.getNumberOfGroups());
@@ -230,6 +239,33 @@ public class RuleEngine extends AbstractProcessor {
         		        // put the total number of actions in the property map
         		        propertyMap.put(PROPERTY_RULEENGINE_ACTIONS_COUNT, ""+ ruleEngine.getNumberOfActions());
         		        
+        		        // process only updated fields by the rule engine
+        		        // if there have been actions defined in the rule files
+
+        		        // buffer to hold the row data
+        		        StringBuffer content = new StringBuffer();
+        		        
+        		        // process only if the collection of fields was changed by
+        		        // a ruleengine action. this means the data was updated so
+        		        // we have to re-write the flowfile content
+       		        	if(collection.isCollectionUpdated())
+        		        {
+       		        		collectionUpdated.set(true);
+       		        		// loop through the collection and construct the output row
+       		        		for(int i=0;i<collection.getFields().size();i++)
+    			            {
+    			           		RowField rf = collection.getField(i);
+			           			content.append(rf.getValue());
+			           			if(i<collection.getFields().size()-1)
+			           			{
+			           				content.append(context.getProperty(ATTRIBUTE_FIELD_SEPARATOR).getValue());
+			           			}
+    			            }
+    			        	
+       		        		// store the result in an atomic reference
+    			        	contentUpdated.set(content.toString());
+       		        	}
+
                     }
                 } catch (Exception ex) {
                     ex.printStackTrace();
@@ -238,6 +274,29 @@ public class RuleEngine extends AbstractProcessor {
             }
         });
 
+        // if the data was updated by an action
+        if(collectionUpdated.get()==true)
+        {
+	        // put an indicator that the data was modified by the ruleengine
+	        propertyMap.put(PROPERTY_RULEENGINE_DATA_MODIFIED, ""+ true);
+
+        	flowFile = session.write(flowFile, new OutputStreamCallback() 
+        	{
+                   @Override
+                   public void process(final OutputStream out) throws IOException 
+                   {
+			        	final byte[] data = contentUpdated.get().getBytes();
+                	   out.write(data);
+                   }
+               });
+        }
+        else
+        {
+	        // put an indicator that the data was NOT modified by the ruleengine
+	        propertyMap.put(PROPERTY_RULEENGINE_DATA_MODIFIED, ""+ false);
+        	
+        }
+        
         // put the map to the flowfile
         flowFile = session.putAllAttributes(flowFile, propertyMap);
         
