@@ -251,6 +251,7 @@ public class RuleEngine extends AbstractProcessor
        		        	if(collection.isCollectionUpdated())
         		        {
        		        		collectionUpdated.set(true);
+       		        		logger.debug("data was modified by an ruleengine action - reconstructing content");
        		        		// loop through the collection and construct the output row
        		        		for(int i=0;i<collection.getFields().size();i++)
     			            {
