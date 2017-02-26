@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8"/>
+        <title>RuleEngine Processor</title>
+        <link rel="stylesheet" href="../../css/component-usage.css" type="text/css"/>
+    </head>
+
+    <body>
+        <!-- Processor Documentation ================================================== -->
+		<h3>Additional details for the RuleEngine processor</h3>
+        <p>
+            The Processor runs the business rules engine - JaRE - against the content of a flow file.
+            The flow file is expected to be a single line of CSV data. The business logic in a ruleengine project 
+            file is checked against the data of the individual fields and the result of the execution
+            is assigned to the flow file attributes. If actions are defined in the project file, the content of the 
+            flow file may be updated.
+        </p>
+        <p>
+        	The ruleengine project (zip) file is created using a web application named Business Rules Maintenance Tool. 
+        	It allows to construct and orchestrate business logic. This logic is captured in a project and can be exported 
+        	to a single project zip file. This file is then used with this Processor. Find details at <a target="_external" href="https://github.com/uwegeercken/rule_maintenance_war">GitHub - Business Rules Maintenance Tool</a> 
+        </p>
+        <p>
+        	When the processor receives a flow file (containing a row of data in CSV format), it splits the row into its 
+        	individual fields/columns using the given field separator. Then the ruleengine executes the business rules from the project zip file against 
+        	the field values. The results of the ruleengine - if the row (flow file) failed or passed to business logic - is assigned to the flow file 
+        	attributes. One can now decide based on these attributes how to continue with the flow file.
+        </p>
+        <p>
+        	The ruleengine also allows to execute an action (or multiple ones) against the individual fields of the row. Based on if a group of rules passed or failed the business logic the action is fired and updates the data. This data is then written 
+        	back to the content of the flow file. There is an attribute available in the flow file ruleengine.dataModified, indicating if the data of the flow file was modified (by an action).
+        </p>
+        <p>
+        	Because the business logic is separated from the Nifi flow and processors, when the business logic changes, the Nifi flow does not have to be changed. 
+        	Instead the business logic is updated externally in the Business Rules Maintenance Tool and a new project zip file is exported to be used with the Nifi RuleEngine processor. This makes defining and changing business logic very agile and at the same time keeps 
+        	the Nifi flow itself slim. It avoids clutter in the flow and thus enhance the quality - a slim flow will be easier to manage and less errors will occur.
+        
+        </p>
+    </body>
+</html>

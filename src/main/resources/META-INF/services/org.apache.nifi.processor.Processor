@@ -1,0 +1,4 @@
+com.datamelt.nifi.processors.MergeTemplate
+com.datamelt.nifi.processors.SplitToAttribute
+com.datamelt.nifi.processors.GenerateData
+com.datamelt.nifi.processors.RuleEngine
