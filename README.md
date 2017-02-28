@@ -79,5 +79,10 @@ The advantage of using this processor and a ruleengine is that the business logi
 have to be changed. The ruleengine can be used to define complex business logic. E.g. "Lastname must be XXX and age must be greater than 25 and country must be Germany or France". This would be difficult to model in nifi and would clutter the flow. Managed in the web app the business logic can modified in an agile way and the flow in Nifi
 stays clean and lean.
 
-author uwe geercken - last update 2017-02-24
+4) The GenerateData processor generates random data from word lists, regular expressions or purely random. The output is in CSV format.
+
+The processor requires a rowlayout file (xml). It defines the fields and field types to be generated. Also, it requires a folder containing category files which define wordlists for a certain category such as "colors" or "weekdays".
+The user can also define how many random rows of data will be generated for each flow file.
+
+author uwe geercken - last update 2017-02-28
 
