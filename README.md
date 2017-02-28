@@ -67,7 +67,8 @@ flowfile attributes. This is the result:
 
 Can be used for any textual data formats such as CSV, HTML, XML, Json, etc.
 
-3) The RuleEngine processor allows to process individual lines from CSV files. It runs business rules against the data and then updates the flowfile
+3)
+The RuleEngine processor allows to process individual lines from CSV files. It runs business rules against the data and then updates the flowfile
 attributes based on the results of the ruleengine. One can then route the flowfile based on these attributes.
 
 The processor requires to set the ruleengine project zip file and a separator. The project zip file can be created with the Business Rules Maintenance Tool -
@@ -79,7 +80,8 @@ The advantage of using this processor and a ruleengine is that the business logi
 have to be changed. The ruleengine can be used to define complex business logic. E.g. "Lastname must be XXX and age must be greater than 25 and country must be Germany or France". This would be difficult to model in nifi and would clutter the flow. Managed in the web app the business logic can modified in an agile way and the flow in Nifi
 stays clean and lean.
 
-4) The GenerateData processor generates random data from word lists, regular expressions or purely random. The output is in CSV format.
+4)
+The GenerateData processor generates random data from word lists, regular expressions or purely random. The output is in CSV format.
 
 The processor requires a rowlayout file (xml). It defines the fields and field types to be generated. Also, it requires a folder containing category files which define wordlists for a certain category such as "colors" or "weekdays".
 The user can also define how many random rows of data will be generated for each flow file.
