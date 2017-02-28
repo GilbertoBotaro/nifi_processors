@@ -53,7 +53,7 @@ import com.datamelt.util.Splitter;
  * is split into its individual fields using the given field separator.
  * <p>
 
- * @author uwe geercken - last update 2017-02-24
+ * @author uwe geercken - last update 2017-02-28
  */
 
 @SideEffectFree
@@ -95,7 +95,7 @@ public class RuleEngine extends AbstractProcessor
     private static final String PROPERTY_RULEENGINE_RULES_PASSED 				= "ruleengine.rulesPassed";
     private static final String PROPERTY_RULEENGINE_RULES_FAILED	 			= "ruleengine.rulesFailed";
     private static final String PROPERTY_RULEENGINE_ACTIONS_COUNT 				= "ruleengine.actionsCount";
-    private static final String PROPERTY_RULEENGINE_DATA_MODIFIED 				= "ruleengine.dataModified";
+    private static final String PROPERTY_RULEENGINE_CONTENT_MODIFIED 			= "ruleengine.contentModified";
     
     // names/labels of the processor attibutes
     private static final String RULEENGINE_ZIPFILE_PROPERTY_NAME = "Ruleengine Project Zip File";
@@ -107,6 +107,7 @@ public class RuleEngine extends AbstractProcessor
             .name(RULEENGINE_ZIPFILE_PROPERTY_NAME)
             .required(true)
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
+            .addValidator(StandardValidators.FILE_EXISTS_VALIDATOR)
             .description("Specify the path and filename of the ruleengine project file to use. Build this file with the Business Rules Maintenance Tool - a web application for constructing and orchestrating business logic.")
             .build();
 
@@ -292,7 +293,7 @@ public class RuleEngine extends AbstractProcessor
         if(collectionUpdated.get()==true)
         {
 	        // put an indicator that the data was modified by the ruleengine
-	        propertyMap.put(PROPERTY_RULEENGINE_DATA_MODIFIED, ""+ true);
+	        propertyMap.put(PROPERTY_RULEENGINE_CONTENT_MODIFIED, "true");
 
         	flowFile = session.write(flowFile, new OutputStreamCallback() 
         	{
@@ -307,7 +308,7 @@ public class RuleEngine extends AbstractProcessor
         else
         {
 	        // put an indicator that the data was NOT modified by the ruleengine
-	        propertyMap.put(PROPERTY_RULEENGINE_DATA_MODIFIED, ""+ false);
+	        propertyMap.put(PROPERTY_RULEENGINE_CONTENT_MODIFIED, "false");
         	
         }
         
