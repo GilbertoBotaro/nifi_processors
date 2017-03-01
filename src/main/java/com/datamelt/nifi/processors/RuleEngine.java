@@ -100,6 +100,7 @@ public class RuleEngine extends AbstractProcessor
     // names/labels of the processor attibutes
     private static final String RULEENGINE_ZIPFILE_PROPERTY_NAME = "Ruleengine Project Zip File";
     private static final String FIELD_SEPERATOR_PROPERTY_NAME = "Field separator";
+    private static final String HEADER_PRESENT_PROPERTY_NAME = "Header present";
     
     private static final String RELATIONSHIP_SUCESS_NAME = "success";
 
@@ -109,6 +110,14 @@ public class RuleEngine extends AbstractProcessor
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
             .addValidator(StandardValidators.FILE_EXISTS_VALIDATOR)
             .description("Specify the path and filename of the ruleengine project file to use. Build this file with the Business Rules Maintenance Tool - a web application for constructing and orchestrating business logic.")
+            .build();
+    
+    public static final PropertyDescriptor ATTRIBUTE_HEADER_PRESENT = new PropertyDescriptor.Builder()
+            .name(HEADER_PRESENT_PROPERTY_NAME)
+            .required(true)
+            .allowableValues("true","false")
+            .defaultValue("false")
+            .description("Specify if each flow file content contains a header row")
             .build();
 
     public static final PropertyDescriptor ATTRIBUTE_FIELD_SEPARATOR = new PropertyDescriptor.Builder()
@@ -120,7 +129,7 @@ public class RuleEngine extends AbstractProcessor
     
     public static final Relationship SUCCESS = new Relationship.Builder()
             .name(RELATIONSHIP_SUCESS_NAME)
-            .description("The ruleengine executed the business logic against the flowfile content.")
+            .description("The ruleengine executed the business logic against the flow file content.")
             .build();
     
     @Override
@@ -128,6 +137,7 @@ public class RuleEngine extends AbstractProcessor
     {
     	List<PropertyDescriptor> properties = new ArrayList<>();
         properties.add(ATTRIBUTE_RULEENGINE_ZIPFILE);
+        properties.add(ATTRIBUTE_HEADER_PRESENT);
         properties.add(ATTRIBUTE_FIELD_SEPARATOR);
         this.properties = Collections.unmodifiableList(properties);
 
@@ -182,35 +192,87 @@ public class RuleEngine extends AbstractProcessor
     	// clear the collections of ruleengine results
     	ruleEngine.getRuleExecutionCollection().clear();
     	
-        // get the flowfile
+        // get the flow file
         FlowFile flowFile = session.get();
         if (flowFile == null) 
         {
             return;
         }
 
-        // read flowfile into inputstream
+        // read flow file into inputstream
         session.read(flowFile, new InputStreamCallback() 
         {
             public void process(InputStream in) throws IOException 
             {
                 try 
                 {
-                    // get the flowfile content
-                    String row = IOUtils.toString(in, "UTF-8");
+                    // get the flow file content
+                    String originalContent = IOUtils.toString(in, "UTF-8");
+                    String headerRow = null;
+                    String row = null;
+                    // check if header row is present
+                    if(context.getProperty(ATTRIBUTE_HEADER_PRESENT).getValue().equals("true"))
+                    {
+                    	logger.debug("configuration indicates 1 header row is present");
+                    	
+                    	String[] originalContentRows = originalContent.split(System.lineSeparator());
+                    	if(originalContentRows.length==2)
+                    	{
+                    		logger.debug("found 2 rows in flow file content - assuming 1 header row and 1 data row");
+                    		headerRow = originalContentRows[0];
+                    		row = originalContentRows[1];
+                    	}
+                    	else if(originalContentRows.length==1)
+                    	{
+                    		logger.debug("found 1 row in flow file content - assuming 1 header row");
+                    		headerRow = originalContentRows[0];
+                    	}
+                    	else if(originalContentRows.length==0)
+                    	{
+                    		logger.debug("found 0 rows in flow file content");
+                    	}
+                    	else
+                    	{
+                    		logger.error("found more than 2 rows in flow file content - assuming header row and data row and ignoring additional rows");
+                    		headerRow = originalContentRows[0];
+                    		row = originalContentRows[1];
+                    	}
+                    }
+                    else
+                    {
+                    	logger.debug("configuration indicates no header row is present");
+                    	row = originalContent;
+                    }
                     logger.debug("read flowfile content" + row);
                     // check that we have data
                     if (row != null && !row.trim().equals("")) {
                         
-                        // use the Splitter class to split the incomming row into fields
+                        // use the Splitter class to split the incoming row into fields
                     	// pass info which separator is used
                 		Splitter splitter = new Splitter(Splitter.TYPE_COMMA_SEPERATED,context.getProperty(ATTRIBUTE_FIELD_SEPARATOR).getValue());
                 		logger.debug("created Splitter object");
 
+                		RowFieldCollection collection = null;
+                		
                 		// convert the fields of the CSV file into a collection
                 		// the given field separator is used to split the incoming data into fields
-                		RowFieldCollection collection = new RowFieldCollection(splitter.getFields(row));
-        		        logger.debug("created RowFieldCollection object: " + collection.getNumberOfFields() + " number of fields");
+                		// if we have a header row, use the field names for the ruleengine
+                		if(headerRow!=null && !headerRow.trim().equals(""))
+                		{
+                			// split header row into fields
+                			String[] headerFields = headerRow.split(context.getProperty(ATTRIBUTE_FIELD_SEPARATOR).getValue());
+                			
+                			// create the collection with header fields
+                			collection = new RowFieldCollection(headerFields,splitter.getFields(row));
+                			logger.debug("splitted header row into fields: " + headerFields.length + " number of fields");
+                		}
+                		else
+                		{
+                			// no header row - create collection without header fields
+                			// this means that the fields can only be called (from the ruleengine) by their number
+                			collection = new RowFieldCollection(splitter.getFields(row));
+                			logger.debug("created RowFieldCollection object: " + collection.getNumberOfFields() + " number of fields");
+                		}
 
         		        logger.debug("running business ruleengine...");
         		        
@@ -258,10 +320,20 @@ public class RuleEngine extends AbstractProcessor
 
         		        // buffer to hold the row data
         		        StringBuffer content = new StringBuffer();
+        		        // append the header row if present
+        		        if(headerRow!=null && !headerRow.trim().equals(""))
+        		        {
+        		        	content.append(headerRow);
+        		        	// if the header row does not have a line seperator at the end then add it
+        		        	if(!headerRow.endsWith(System.lineSeparator()))
+        		        	{
+        		        		content.append(System.lineSeparator());
+        		        	}
+        		        }
         		        
         		        // process only if the collection of fields was changed by
         		        // a ruleengine action. this means the data was updated so
-        		        // we have to re-write the flowfile content
+        		        // we have to re-write the flow file content
        		        	if(collection.isCollectionUpdated())
         		        {
        		        		collectionUpdated.set(true);
@@ -289,7 +361,7 @@ public class RuleEngine extends AbstractProcessor
             }
         });
 
-        // if the data was updated by an action
+        // if the data was updated (by an action)
         if(collectionUpdated.get()==true)
         {
 	        // put an indicator that the data was modified by the ruleengine
@@ -312,13 +384,13 @@ public class RuleEngine extends AbstractProcessor
         	
         }
         
-        // put the map to the flowfile
+        // put the map to the flow file
         flowFile = session.putAllAttributes(flowFile, propertyMap);
         
-        // for provenance
+        // for provenance reporting
         session.getProvenanceReporter().modifyAttributes(flowFile);
         
-        // transfer the flowfile
+        // transfer the flow file
         session.transfer(flowFile, SUCCESS);
     }
 

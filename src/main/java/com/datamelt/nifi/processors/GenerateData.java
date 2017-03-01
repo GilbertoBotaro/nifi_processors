@@ -5,10 +5,11 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.flowfile.FlowFile;
@@ -50,11 +51,18 @@ public class GenerateData extends AbstractProcessor
     
     DataCreator dataCreator = null;
     
-    private static final String PROPERTY_CATEGORIES_PATH_NAME = "Categories folder";
-    private static final String PROPERTY_ROWLAYOUT_PATH_NAME = "Rowlayout XML file folder location and filename";
-    private static final String RELATIONSHIP_SUCESS_NAME = "success";
+    private static final String PROPERTY_CATEGORIES_PATH_NAME 		= "Categories folder";
+    private static final String PROPERTY_ROWLAYOUT_PATH_NAME 		= "Rowlayout XML file folder and filename";
+    private static final String PROPERTY_NUMBER_OF_OUTPUT_ROWS_NAME	= "Number of output rows";
+    private static final String PROPERTY_MAXIMUM_YEAR_NAME			= "Maximum year for dates";
+    private static final String PROPERTY_MINIMUM_YEAR_NAME			= "Minimum year for dates";
     
-    private static final String FIELD_SEPERATOR_PROPERTY_NAME = "Field separator";
+    private static final String PROPERTY_FILENAME	 				= "filename";
+    private static final String RELATIONSHIP_SUCESS_NAME 			= "success";
+    
+    private static final String FIELD_SEPERATOR_PROPERTY_NAME 		= "Field separator";
+    
+    private static final String OUTPUT_FILENAME						= "datagenerator.csv";
     
     public static final PropertyDescriptor WORDLISTS_PATH = new PropertyDescriptor.Builder()
             .name(PROPERTY_CATEGORIES_PATH_NAME)
@@ -72,8 +80,8 @@ public class GenerateData extends AbstractProcessor
             .description("Specify the folder and name of the rowlayout xml file")
             .build();
     
-    public static final PropertyDescriptor BATCH_SIZE = new PropertyDescriptor.Builder()
-            .name("Batch Size")
+    public static final PropertyDescriptor NUMBER_OF_OUTPUT_ROWS = new PropertyDescriptor.Builder()
+            .name(PROPERTY_NUMBER_OF_OUTPUT_ROWS_NAME)
             .description("The number of rows of CSV data to be generated for each flowfile")
             .required(true)
             .defaultValue("1")
@@ -88,9 +96,25 @@ public class GenerateData extends AbstractProcessor
             .description("Specify the character to separate the generated fields of the output row from each other")
             .build();
     
+    public static final PropertyDescriptor MAXIMUM_YEAR = new PropertyDescriptor.Builder()
+            .name(PROPERTY_MAXIMUM_YEAR_NAME)
+            .required(true)
+            .addValidator(StandardValidators.POSITIVE_INTEGER_VALIDATOR)
+            .defaultValue("2099")
+            .description("Specify the maximum generated year for date related fields")
+            .build();
+    
+    public static final PropertyDescriptor MINIMUM_YEAR = new PropertyDescriptor.Builder()
+            .name(PROPERTY_MINIMUM_YEAR_NAME)
+            .required(true)
+            .addValidator(StandardValidators.POSITIVE_INTEGER_VALIDATOR)
+            .defaultValue("2000")
+            .description("Specify the maximum generated year for date related fields")
+            .build();
+    
     public static final Relationship SUCCESS = new Relationship.Builder()
             .name(RELATIONSHIP_SUCESS_NAME)
-            .description("The flowfile content was successfully generated")
+            .description("The flow file content was successfully generated")
             .build();
     
     @Override
@@ -99,8 +123,10 @@ public class GenerateData extends AbstractProcessor
         List<PropertyDescriptor> properties = new ArrayList<>();
         properties.add(WORDLISTS_PATH);
         properties.add(ROWLAYOUT_PATH);
-        properties.add(BATCH_SIZE);
+        properties.add(NUMBER_OF_OUTPUT_ROWS);
         properties.add(FIELD_SEPARATOR);
+        properties.add(MAXIMUM_YEAR);
+        properties.add(MINIMUM_YEAR);
 
         this.properties = Collections.unmodifiableList(properties);
         
@@ -112,16 +138,23 @@ public class GenerateData extends AbstractProcessor
     @OnScheduled
     public void onScheduled(final ProcessContext context) throws Exception
     {
+    	getLogger().debug("creating DataCreator instance");
     	dataCreator = new DataCreator();
     	
-    	getLogger().debug("parsing rowlayout file from: " + context.getProperty(ROWLAYOUT_PATH).getValue());
-    	dataCreator.parseRowLayoutFile(context.getProperty(ROWLAYOUT_PATH).getValue());
     	getLogger().debug("setting categories files folder to: " + context.getProperty(WORDLISTS_PATH).getValue());
     	dataCreator.setCategoryFilesFolder(context.getProperty(WORDLISTS_PATH).getValue());
     	getLogger().debug("setting number of output lines to 1");
        	dataCreator.setNumberOfOutputLines(1);
        	getLogger().debug("setting field separator to: " + context.getProperty(FIELD_SEPARATOR).getValue());
        	dataCreator.setFieldSeparator(context.getProperty(FIELD_SEPARATOR).getValue());
+       	getLogger().debug("setting maximum year for dates to: " + context.getProperty(MAXIMUM_YEAR).getValue());
+       	dataCreator.setMaximumYear(context.getProperty(MAXIMUM_YEAR).asInteger());
+       	getLogger().debug("setting minimum year for dates to: " + context.getProperty(MINIMUM_YEAR).getValue());
+       	dataCreator.setMinimumYear(context.getProperty(MINIMUM_YEAR).asInteger());
+
+    	getLogger().debug("parsing rowlayout file from: " + context.getProperty(ROWLAYOUT_PATH).getValue());
+    	dataCreator.parseRowLayoutFile(context.getProperty(ROWLAYOUT_PATH).getValue());
+
     }
     
     @Override
@@ -130,6 +163,9 @@ public class GenerateData extends AbstractProcessor
     	// get a logger instance
     	final ComponentLog logger = getLogger();
     	
+    	// map used to store the attribute name and its value from the content of the flowfile
+        final Map<String, String> propertyMap = new HashMap<>();
+        
     	// buffer to hold the content data
         StringBuffer content = new StringBuffer();
 
@@ -138,11 +174,11 @@ public class GenerateData extends AbstractProcessor
         	getLogger().debug("creating flow file");
         	FlowFile flowFile = session.create();
         	
-        	getLogger().debug("generating rows: context.getProperty(BATCH_SIZE).asInteger()");
-        	for(AtomicReference<Integer> i = new AtomicReference<Integer>(0); i.get() < context.getProperty(BATCH_SIZE).asInteger(); i.set(i.get()+1)) 
+        	getLogger().debug("generating rows: " + context.getProperty(NUMBER_OF_OUTPUT_ROWS).asInteger());
+        	for(int i = 0; i < context.getProperty(NUMBER_OF_OUTPUT_ROWS).asInteger(); i++) 
 	        {
 	        	content.append(dataCreator.generateRow() );
-	        	if(i.get()<context.getProperty(BATCH_SIZE).asInteger()-1)
+	        	if(i<context.getProperty(NUMBER_OF_OUTPUT_ROWS).asInteger()-1)
 	        	{
 	        		content.append(System.lineSeparator());
 	        	}
@@ -150,16 +186,23 @@ public class GenerateData extends AbstractProcessor
 	        	
             if (content!=null && content.length() > 0) 
             {
-                flowFile = session.write(flowFile, new OutputStreamCallback() 
+            	flowFile = session.write(flowFile, new OutputStreamCallback() 
                 {
                     @Override
                     public void process(final OutputStream out) throws IOException 
                     {
+                    	getLogger().debug("writing generated data to flow file content");
                     	out.write(content.toString().getBytes());
                     }
                 });
+		    	// put the name of the ruleengine zip file in the list of properties
+		        propertyMap.put(PROPERTY_FILENAME, OUTPUT_FILENAME);
+
             }
         	
+            // put the map to the flow file
+            flowFile = session.putAllAttributes(flowFile, propertyMap);
+            
             session.getProvenanceReporter().create(flowFile);
             session.transfer(flowFile, SUCCESS);
         }
