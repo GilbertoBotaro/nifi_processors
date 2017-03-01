@@ -53,17 +53,20 @@ import com.datamelt.util.Splitter;
  * is split into its individual fields using the given field separator.
  * <p>
 
- * @author uwe geercken - last update 2017-02-28
+ * @author uwe geercken - last update 2017-03-01
  */
 
 @SideEffectFree
 @Tags({"CSV", "ruleengine", "filter", "decision", "logic", "business rules"})
 @CapabilityDescription("Uses the Business Rules Engine JaRE to execute a ruleengine file containing business logic against the flow file content."
-        + "The flowfile content is expected to be a single row of data in CSV format. This row of data is split into it's individual fields "
-		+ "and then the business logic from the project zip file is applied to the fields. "
-        + "The ruleengine file (zip format) is created by exporting a project from the Business Rules Maintenance Tool - a web application to construct and orchestrate business logic."
-		+ "Because the business logic is separated from the Nifi flow and processors, when the business logic changes, the Nifi flow does not have to be changed. "
-        + "Instead the business logic is updated in the Business Rules maintenance tool and a new project zip file is created."
+        + " The flowfile content is expected to be a single row of data in CSV format. This row of data is split into it's individual fields"
+		+ " and then the business logic from the project zip file is applied to the fields. "
+        + " The ruleengine file (zip format) is created by exporting a project from the Business Rules Maintenance Tool - a web application to construct and orchestrate business logic."
+		+ " Because the business logic is separated from the Nifi flow and processors, when the business logic changes, the Nifi flow does not have to be changed. "
+        + " Instead the business logic is updated in the Business Rules maintenance tool and a new project zip file is created."
+		+ " If a header row is present, the header row is split into it's individual fields and these are passed to the ruleengine. This allows the rules to reference the names of the fields instead of their index number in the row."
+        + " A header row can only be a single row, needs to be present in each flow file and has to use the same separator as the data."
+		+ " If more than one row is found (or two, when a header row is present), then the rest of the content will be ignored by the ruleengine and removed from the flow file content."
 		)
 @WritesAttributes({ @WritesAttribute(attribute = "ruleengine.zipfile", description = "The name of the ruleengine project zip file that was used"),
 @WritesAttribute(attribute = "ruleengine.rulegroupsCount", description = "The number of rulegroups in the ruleengine project zip file"),
@@ -216,32 +219,52 @@ public class RuleEngine extends AbstractProcessor
                     	logger.debug("configuration indicates 1 header row is present");
                     	
                     	String[] originalContentRows = originalContent.split(System.lineSeparator());
-                    	if(originalContentRows.length==2)
+                    	if(originalContentRows!=null && originalContentRows.length==2)
                     	{
                     		logger.debug("found 2 rows in flow file content - assuming 1 header row and 1 data row");
                     		headerRow = originalContentRows[0];
                     		row = originalContentRows[1];
                     	}
-                    	else if(originalContentRows.length==1)
+                    	else if(originalContentRows!=null && originalContentRows.length==1)
                     	{
                     		logger.debug("found 1 row in flow file content - assuming 1 header row");
                     		headerRow = originalContentRows[0];
                     	}
-                    	else if(originalContentRows.length==0)
+                    	else if(originalContentRows!=null && originalContentRows.length==0)
                     	{
                     		logger.debug("found 0 rows in flow file content");
                     	}
                     	else
                     	{
-                    		logger.error("found more than 2 rows in flow file content - assuming header row and data row and ignoring additional rows");
-                    		headerRow = originalContentRows[0];
-                    		row = originalContentRows[1];
+                    		if(originalContentRows!=null)
+                    		{
+                    			logger.warn("found more than 2 rows in flow file content - assuming header row and data row and ignoring additional rows");
+                    			headerRow = originalContentRows[0];
+                    			row = originalContentRows[1];
+                    		}
                     	}
                     }
                     else
                     {
                     	logger.debug("configuration indicates no header row is present");
-                    	row = originalContent;
+                    	
+                    	String[] originalContentRows = originalContent.split(System.lineSeparator());
+                    	if(originalContentRows!=null && originalContentRows.length==1)
+                    	{
+                    		row = originalContentRows[0];
+                    	}
+                    	else if(originalContentRows!=null && originalContentRows.length==0)
+                    	{
+                    		logger.debug("found 0 rows in flow file content");
+                    	}
+                    	else
+                    	{
+                    		if(originalContentRows!=null)
+                    		{
+                    			logger.warn("found more than 1 row in flow file content - assuming data row and ignoring additional rows");	
+                    			row = originalContentRows[0];
+                    		}
+                    	}
                     }
                     logger.debug("read flowfile content" + row);
                     // check that we have data
@@ -372,7 +395,7 @@ public class RuleEngine extends AbstractProcessor
                    @Override
                    public void process(final OutputStream out) throws IOException 
                    {
-			        	final byte[] data = contentUpdated.get().getBytes();
+                	   final byte[] data = contentUpdated.get().getBytes();
                 	   out.write(data);
                    }
                });
@@ -381,7 +404,6 @@ public class RuleEngine extends AbstractProcessor
         {
 	        // put an indicator that the data was NOT modified by the ruleengine
 	        propertyMap.put(PROPERTY_RULEENGINE_CONTENT_MODIFIED, "false");
-        	
         }
         
         // put the map to the flow file
