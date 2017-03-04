@@ -1,3 +1,21 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
 package com.datamelt.nifi.processors;
 
 /*
@@ -83,11 +101,12 @@ import org.apache.velocity.app.VelocityEngine;
  * 
  * 
  *
- * @author uwe geercken - last update 2016-03-19
+ * @author uwe geercken - last update 2017-03-04
  */
 @SideEffectFree
 @Tags({"Template Engine", "Template", "Apache Velocity", "CSV", "format", "convert"})
-@CapabilityDescription("Takes the attributes of a flowfile, merges them with an Apache Velocity template and replaces the content of the flowfile with the result. Specifying the name of an attribute in the template - using following format: $<attribute name> (example: $column_001) - will replace this placeholder with the actual value from the attribute.")
+@CapabilityDescription("Takes the attributes of a flowfile, merges them with an Apache Velocity template and replaces the content of the flowfile with the result. Specifying the name of an attribute in the template - using following format: $<attribute name> (example: $column_001) - will replace this placeholder with the actual value from the attribute."
+						+ "You can use the SplitToAttribute processor to split the flow file content using a defined separator and assign the values to attributes.")
 
 public class MergeTemplate extends AbstractProcessor
 {
@@ -131,12 +150,12 @@ public class MergeTemplate extends AbstractProcessor
             .required(true)
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
             .defaultValue(PROPERTY_ATTRIBUTE_FILTER_DEFAULT)
-            .description("Specify a filter in the form of a regular expression for the attributes to include.")
+            .description("Specify a filter in the form of a regular expression which attributes to include.")
             .build();
     
     public static final Relationship MERGED = new Relationship.Builder()
             .name("merged")
-            .description("The result of the merge of attributes with the template will be routed to this destination")
+            .description("The merged attributes (merged with the template) will be routed to this destination")
             .build();
     
     public static final Relationship ORIGINAL = new Relationship.Builder()
@@ -197,6 +216,9 @@ public class MergeTemplate extends AbstractProcessor
     {
         final AtomicReference<String> value = new AtomicReference<>();
         
+        // get a logger instance
+    	final ComponentLog logger = getLogger();
+    	
         FlowFile flowfile = session.get();
         
         final FlowFile original = session.clone(flowfile);
@@ -220,17 +242,24 @@ public class MergeTemplate extends AbstractProcessor
             		String attributesFilter = context.getProperty(ATTRIBUTE_FILTER).getValue();
             		
             		// loop over the map of attributes
+            		logger.debug("looping over map of attributes");
             		for (Map.Entry<String, String> entry : attributes.entrySet()) 
             		{
             			if(entry.getKey().matches(attributesFilter))
             			{
-            				velocityContext.put(entry.getKey(), entry.getValue());
+            				String value = entry.getValue();
+            				// remove lineseparator from the field
+            				value = value.replace(System.lineSeparator(), "");
+            				// put into the velocity context
+            				velocityContext.put(entry.getKey(), value);
+            				logger.debug("put key: [" + entry.getKey() + "] in the velocity context with value: [" + value + "]");
             			}
             		}
             		
             		// merge the template with the context (data/variables)
             		template.merge(velocityContext,writer);
-
+            		logger.debug("merged template with context");
+            		
             		 // set the value to the resulting string
             		value.set(writer.toString());
             		
@@ -246,11 +275,11 @@ public class MergeTemplate extends AbstractProcessor
         // To write the results back out to flow file 
         flowfile = session.write(flowfile, new OutputStreamCallback() 
         {
-
             @Override
             public void process(OutputStream out) throws IOException 
             {
-                	out.write(value.get().getBytes());
+                // write result of merge to flow file	
+            	out.write(value.get().getBytes());
             }
         });
         

@@ -1,3 +1,21 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
 package com.datamelt.nifi.processors;
 
 import java.io.IOException;
@@ -55,7 +73,7 @@ import org.apache.nifi.processor.util.StandardValidators;
 
 @SideEffectFree
 @Tags({"CSV", "attributes", "split"})
-@CapabilityDescription("Splits the content from a flowfile into individual columns. The resulting attribute contains field prefix plus the column positional "
+@CapabilityDescription("Splits the content from a flowfile into individual columns. The flow file is expected to be a single line of CSV data. The resulting attribute contains field prefix plus the column positional "
         + "number and the value from the content as an attribute.")
 
 public class SplitToAttribute extends AbstractProcessor {
@@ -100,7 +118,7 @@ public class SplitToAttribute extends AbstractProcessor {
             .required(true)
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
             .defaultValue(PROPERTY_FIELD_NUMBER_NUMBERFORMAT_DEFAULT)
-            .description("Specify the number format for the field number. E.g. \"000\" to get a three digit formatting.")
+            .description("Specify the number format for the field number. E.g. \"000\" to get a three digit formatting. According to Java DecimalFormat class.")
             .build();
 
     public static final Relationship SUCCESS = new Relationship.Builder()
@@ -146,9 +164,9 @@ public class SplitToAttribute extends AbstractProcessor {
                 try {
 
 
-                    // get the flowfile content
-                    String row = IOUtils.toString(in);
-
+                    // get the flow file content
+                    String row = IOUtils.toString(in, "UTF-8");
+                    
                     // check that we have data
                     if (row != null && !row.trim().equals("")) {
                         //put the information which field prefix was used to the map
@@ -159,8 +177,18 @@ public class SplitToAttribute extends AbstractProcessor {
 
                         // loop over the fields
                         if (fields != null && fields.length > 0) {
-                            for (int i = 0; i < fields.length; i++) {
-                                propertyMap.put(context.getProperty(ATTRIBUTE_PREFIX).getValue() + df.format(i), fields[i]);
+                            
+                        	for (int i = 0; i < fields.length; i++) 
+                            {
+                        		if(fields[i]!=null && !fields[i].trim().equals(""))
+                        		{
+                        			String field = fields[i];
+                        			// remove any lineseparators
+                        			field = field.replace(System.lineSeparator(), "");
+                        			
+                        			// put into the map of attributes
+                        			propertyMap.put(context.getProperty(ATTRIBUTE_PREFIX).getValue() + df.format(i), field);
+                        		}
                             }
                         }
                     }
