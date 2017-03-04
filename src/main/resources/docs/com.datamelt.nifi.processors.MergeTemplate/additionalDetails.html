@@ -11,5 +11,10 @@
         <p>
             Processor uses the Apache Velocity template engine to merge flow file attributes with a given template.
         </p>
+        <p>
+        	Use the SplitToAttribute processor to split the incoming data row - a single row of CSV data - into individual fields and assign these fields 
+        	to flow file attributes. The MergeTemplate processor then merges the attributes with an Apache Velocity template and the flow file content then 
+        	contains the result of the merge operation.
+        </p>
     </body>
 </html>

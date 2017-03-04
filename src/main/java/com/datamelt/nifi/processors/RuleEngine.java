@@ -74,14 +74,14 @@ import com.datamelt.util.Splitter;
  * is split into its individual fields using the given field separator.
  * <p>
 
- * @author uwe geercken - last update 2017-03-03
+ * @author uwe geercken - last update 2017-03-04
  */
 
 @SideEffectFree
 @Tags({"CSV", "ruleengine", "filter", "decision", "logic", "business rules"})
 @CapabilityDescription("Uses the Business Rules Engine JaRE to execute a ruleengine file containing business logic against the flow file content."
         + " The flowfile content is expected to be a single row of data in CSV format. This row of data is split into it's individual fields"
-		+ " and then the business logic from the project zip file is applied to the fields. "
+		+ " and then the business logic from the project zip file is applied to the fields. If actions are defined these may update the flow file content."
         + " The ruleengine file (zip format) is created by exporting a project from the Business Rules Maintenance Tool - a web application to construct and orchestrate business logic."
 		+ " Because the business logic is separated from the Nifi flow and processors, when the business logic changes, the Nifi flow does not have to be changed. "
         + " Instead the business logic is updated in the Business Rules maintenance tool and a new project zip file is created."
@@ -108,6 +108,8 @@ public class RuleEngine extends AbstractProcessor
 	// set of relationships
     private Set<Relationship> relationships;
 
+    private String separator="";
+    
     // the business rules engine to execute business logic against data
     private static BusinessRulesEngine ruleEngine 								= null;
     
@@ -137,6 +139,14 @@ public class RuleEngine extends AbstractProcessor
     // separator used to split up the defined field names
     private static final String FIELD_NAMES_SEPARATOR 							= ",";
     
+    private static final String FIELD_SEPERATOR_POSSIBLE_VALUE_COMMA			= "Comma";
+    private static final String FIELD_SEPERATOR_POSSIBLE_VALUE_SEMICOLON		= "Semicolon";
+    private static final String FIELD_SEPERATOR_POSSIBLE_VALUE_TAB				= "Tab";
+    
+    private static final String SEPERATOR_COMMA									= ",";
+    private static final String SEPERATOR_SEMICOLON								= ";";
+    private static final String SEPERATOR_TAB									= "\t";
+    
     // properties of the processor
     public static final PropertyDescriptor ATTRIBUTE_RULEENGINE_ZIPFILE = new PropertyDescriptor.Builder()
             .name(RULEENGINE_ZIPFILE_PROPERTY_NAME)
@@ -151,7 +161,7 @@ public class RuleEngine extends AbstractProcessor
             .required(true)
             .allowableValues("true","false")
             .defaultValue("false")
-            .description("Specify if each flow file content contains a single line header row")
+            .description("Specify if each flow file content contains a (single line) header row")
             .build();
 
     public static final PropertyDescriptor ATTRIBUTE_FIELD_NAMES = new PropertyDescriptor.Builder()
@@ -164,6 +174,7 @@ public class RuleEngine extends AbstractProcessor
     public static final PropertyDescriptor ATTRIBUTE_FIELD_SEPARATOR = new PropertyDescriptor.Builder()
             .name(FIELD_SEPERATOR_PROPERTY_NAME)
             .required(true)
+            .allowableValues(FIELD_SEPERATOR_POSSIBLE_VALUE_COMMA,FIELD_SEPERATOR_POSSIBLE_VALUE_SEMICOLON, FIELD_SEPERATOR_POSSIBLE_VALUE_TAB)
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
             .description("Specify the field separator to be used to split the incomming flow file content. The content must be a single row of CSV data. This separator is also used to split the fields of the header row.")
             .build();
@@ -173,7 +184,7 @@ public class RuleEngine extends AbstractProcessor
             .required(true)
             .allowableValues("true","false")
             .defaultValue("false")
-            .description("Specify if the detailed results should be output. This creates one new flow file containing all results of all rules.")
+            .description("Specify if the detailed results should be output. This creates flow files containing one row of data per rule (!). E.g. if you have one row of data and 10 rules, the flowfile contains 10 rows with the detailed results for each rule.")
             .build();
     
     public static final Relationship SUCCESS = new Relationship.Builder()
@@ -208,7 +219,22 @@ public class RuleEngine extends AbstractProcessor
     @OnScheduled
     public void onScheduled(final ProcessContext context) throws Exception
     {
-        // get the zip file, containing the business rules
+        // faced problems when having \t as an attribute and could not find a solution
+    	// so using allowable values instead and translating them here
+    	if(context.getProperty(ATTRIBUTE_FIELD_SEPARATOR).getValue().equals(FIELD_SEPERATOR_POSSIBLE_VALUE_COMMA))
+        {
+        	separator = SEPERATOR_COMMA;
+        }
+        else if(context.getProperty(ATTRIBUTE_FIELD_SEPARATOR).getValue().equals(FIELD_SEPERATOR_POSSIBLE_VALUE_SEMICOLON))
+        {
+        	separator = SEPERATOR_SEMICOLON;
+        }
+        else if(context.getProperty(ATTRIBUTE_FIELD_SEPARATOR).getValue().equals(FIELD_SEPERATOR_POSSIBLE_VALUE_TAB))
+        {
+        	separator = SEPERATOR_TAB;
+        }
+    	
+    	// get the zip file, containing the business rules
         File file = new File(context.getProperty(ATTRIBUTE_RULEENGINE_ZIPFILE).getValue());
         if(file.exists() && file.isFile())
         {
@@ -387,7 +413,7 @@ public class RuleEngine extends AbstractProcessor
                         
                         // use the Splitter class to split the incoming row into fields
                     	// pass info which separator is used
-                		Splitter splitter = new Splitter(Splitter.TYPE_COMMA_SEPERATED,context.getProperty(ATTRIBUTE_FIELD_SEPARATOR).getValue());
+                		Splitter splitter = new Splitter(Splitter.TYPE_COMMA_SEPERATED,separator);
                 		logger.debug("created Splitter object");
 
                 		RowFieldCollection collection = null;
@@ -401,7 +427,7 @@ public class RuleEngine extends AbstractProcessor
                 			// split header row into fields
                 			if(context.getProperty(ATTRIBUTE_HEADER_PRESENT).getValue().equals("true"))
                 			{
-                				headerFields = headerRow.split(context.getProperty(ATTRIBUTE_FIELD_SEPARATOR).getValue());
+                				headerFields = headerRow.split(separator);
                 			}
                 			// split defined field names
                 			else
@@ -463,8 +489,9 @@ public class RuleEngine extends AbstractProcessor
         		        
         		        // buffer to hold the row data
         		        StringBuffer content = new StringBuffer();
+        		        
         		        // append the header row if present
-        		        if(headerRow!=null && !headerRow.trim().equals(""))
+        		        if(context.getProperty(ATTRIBUTE_HEADER_PRESENT).getValue().equals("true") && headerRow!=null && !headerRow.trim().equals(""))
         		        {
         		        	content.append(headerRow);
         		        	// if the header row does not have a line seperator at the end then add it
@@ -488,7 +515,8 @@ public class RuleEngine extends AbstractProcessor
 			           			content.append(rf.getValue());
 			           			if(i<collection.getFields().size()-1)
 			           			{
-			           				content.append(context.getProperty(ATTRIBUTE_FIELD_SEPARATOR).getValue());
+			           				//content.append(context.getProperty(ATTRIBUTE_FIELD_SEPARATOR).getValue());
+			           				content.append(separator);
 			           			}
     			            }
     			        	
@@ -497,6 +525,7 @@ public class RuleEngine extends AbstractProcessor
        		        	}
        		        	else
        		        	{
+       		        		// no change was made by the ruleengine
        		        		contentUpdated.set(originalContent);
        		        	}
 
@@ -558,10 +587,10 @@ public class RuleEngine extends AbstractProcessor
 	   						// get the result 
 	   					    RuleExecutionResult result = results.get(i);
 	   					    detailedFlowFileContent.append(contentUpdated.get());
-	   					    detailedFlowFileContent.append(context.getProperty(ATTRIBUTE_FIELD_SEPARATOR).getValue());
+	   					    detailedFlowFileContent.append(separator);
 	   					    detailedFlowFileContent.append(result.getMessage());
 	   					    
-	   					    // add line separator
+	   					    // add line separator except last line
 	   					    if(i<results.size()-1)
 	   					    {
 	   					    	detailedFlowFileContent.append(System.lineSeparator());
