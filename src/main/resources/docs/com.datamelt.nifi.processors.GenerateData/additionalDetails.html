@@ -11,5 +11,16 @@
         <p>
             Processor to generate mass data based on word lists, regular expressions or purely random.
         </p>
+        <p>
+        	When the datagenerator generates random rows of data, it will pick a random word or expression from the category file. So you can create mutiple category files containing lists of words which the datagenerator will use. 
+			If you define a regular expression pattern like, then the datagenerator will create data that fits to the given pattern. Or one can define a field type of "random", where data will be generated purely random.
+        </p>
+        <p>
+        	The structure of the data to generate is defined in an external Xml file (rowlayout.xml file).
+        </p>
+        <p>
+        	To generate data from word lists, create a file with the extension &quot;.category&quot;. The content of the file contains word or expressions - one per line. 
+        	E.g. a file seasons.category would contain spring, summer autumn and winter - each on a separate line. 
+        </p>
     </body>
 </html>

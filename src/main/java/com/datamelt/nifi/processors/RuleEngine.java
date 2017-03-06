@@ -36,6 +36,8 @@ import java.util.zip.ZipFile;
 
 import org.apache.commons.io.IOUtils;
 import org.apache.nifi.components.PropertyDescriptor;
+import org.apache.nifi.components.state.Scope;
+import org.apache.nifi.components.state.StateManager;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.logging.ComponentLog;
 import org.apache.nifi.processor.AbstractProcessor;
@@ -44,6 +46,7 @@ import org.apache.nifi.processor.ProcessSession;
 import org.apache.nifi.processor.ProcessorInitializationContext;
 import org.apache.nifi.processor.Relationship;
 import org.apache.nifi.annotation.behavior.SideEffectFree;
+import org.apache.nifi.annotation.behavior.Stateful;
 import org.apache.nifi.annotation.behavior.WritesAttribute;
 import org.apache.nifi.annotation.behavior.WritesAttributes;
 import org.apache.nifi.annotation.documentation.CapabilityDescription;
@@ -74,7 +77,7 @@ import com.datamelt.util.Splitter;
  * is split into its individual fields using the given field separator.
  * <p>
 
- * @author uwe geercken - last update 2017-03-04
+ * @author uwe geercken - last update 2017-03-06
  */
 
 @SideEffectFree
@@ -98,9 +101,8 @@ import com.datamelt.util.Splitter;
 @WritesAttribute(attribute = "ruleengine.rulesPassed", description = "The number of rules that passed the business logic after running the ruleengine"),
 @WritesAttribute(attribute = "ruleengine.rulesFailed", description = "The number of rules that failed the business logic after running the ruleengine"),
 @WritesAttribute(attribute = "ruleengine.actionsCount", description = "The number of actions in the ruleengine project zip file"),
-@WritesAttribute(attribute = "ruleengine.dataModified", description = "Indicator if the flow file content was modified based on one or multiple actions in the ruleengine project zip file")
-})
-
+@WritesAttribute(attribute = "ruleengine.dataModified", description = "Indicator if the flow file content was modified based on one or multiple actions in the ruleengine project zip file")})
+@Stateful(scopes = {Scope.LOCAL}, description = "The name and the last modified date of the ruleengine project zip file is captured when the processor is scheduled. This creates a reference to the filename and last modified date in case the processor runs for a longer period or in case the file meanwhile has changed.")
 public class RuleEngine extends AbstractProcessor 
 {
     // list of properties
@@ -146,6 +148,9 @@ public class RuleEngine extends AbstractProcessor
     private static final String SEPERATOR_COMMA									= ",";
     private static final String SEPERATOR_SEMICOLON								= ";";
     private static final String SEPERATOR_TAB									= "\t";
+    
+    private static final String STATE_MANAGER_FILENAME							= "ruleengine.zipfile.latest";
+    private static final String STATE_MANAGER_FILENAME_LASTMODIFIED				= "ruleengine.zipfile.lastModified";
     
     // properties of the processor
     public static final PropertyDescriptor ATTRIBUTE_RULEENGINE_ZIPFILE = new PropertyDescriptor.Builder()
@@ -238,6 +243,19 @@ public class RuleEngine extends AbstractProcessor
         File file = new File(context.getProperty(ATTRIBUTE_RULEENGINE_ZIPFILE).getValue());
         if(file.exists() && file.isFile())
         {
+        	// get a state manager instance
+        	StateManager stateManager = context.getStateManager();
+        	//StateMap state = stateManager.getState(Scope.LOCAL);
+        	
+        	// put filename and lastmodified date into hashmap
+        	// so we have a reference which file is currently used with the processor
+        	HashMap<String,String> fileMap = new HashMap<String,String>();
+        	fileMap.put(STATE_MANAGER_FILENAME, file.getName());
+        	fileMap.put(STATE_MANAGER_FILENAME_LASTMODIFIED, new Date(file.lastModified()).toString());
+        	
+        	// put the hashmap to statemanager
+        	context.getStateManager().setState(fileMap, Scope.LOCAL);
+        	
         	// get the last modified date of the file
         	Long fileLastModified = file.lastModified();
         	SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH-mm-ss");
