@@ -150,9 +150,9 @@ public class ExecuteRuleEngine extends AbstractProcessor
     // separator used to split up the defined field names
     private static final String FIELD_NAMES_SEPARATOR 							= ",";
     
-    private static final String FIELD_SEPERATOR_POSSIBLE_VALUE_COMMA			= "Comma";
-    private static final String FIELD_SEPERATOR_POSSIBLE_VALUE_SEMICOLON		= "Semicolon";
-    private static final String FIELD_SEPERATOR_POSSIBLE_VALUE_TAB				= "Tab";
+    private static final String FIELD_SEPARATOR_POSSIBLE_VALUE_COMMA			= "Comma";
+    private static final String FIELD_SEPARATOR_POSSIBLE_VALUE_SEMICOLON		= "Semicolon";
+    private static final String FIELD_SEPARATOR_POSSIBLE_VALUE_TAB				= "Tab";
     
     
     private static final String OUTPUT_TYPE_ALL_GROUPS_ALL_RULES				= "all groups - all rules";
@@ -163,9 +163,9 @@ public class ExecuteRuleEngine extends AbstractProcessor
     private static final String OUTPUT_TYPE_PASSED_GROUPS_PASSED_RULES			= "passed groups - passed rules only";
     private static final String OUTPUT_TYPE_PASSED_GROUPS_ALL_RULES				= "passed groups - all rules";
     
-    private static final String SEPERATOR_COMMA									= ",";
-    private static final String SEPERATOR_SEMICOLON								= ";";
-    private static final String SEPERATOR_TAB									= "\t";
+    private static final String SEPARATOR_COMMA									= ",";
+    private static final String SEPARATOR_SEMICOLON								= ";";
+    private static final String SEPARATOR_TAB									= "\t";
     
     private static final String STATE_MANAGER_FILENAME							= "ruleengine.zipfile.latest";
     private static final String STATE_MANAGER_FILENAME_LASTMODIFIED				= "ruleengine.zipfile.lastModified";
@@ -197,7 +197,7 @@ public class ExecuteRuleEngine extends AbstractProcessor
     public static final PropertyDescriptor ATTRIBUTE_FIELD_SEPARATOR = new PropertyDescriptor.Builder()
             .name(FIELD_SEPERATOR_PROPERTY_NAME)
             .required(true)
-            .allowableValues(FIELD_SEPERATOR_POSSIBLE_VALUE_COMMA,FIELD_SEPERATOR_POSSIBLE_VALUE_SEMICOLON, FIELD_SEPERATOR_POSSIBLE_VALUE_TAB)
+            .allowableValues(FIELD_SEPARATOR_POSSIBLE_VALUE_COMMA,FIELD_SEPARATOR_POSSIBLE_VALUE_SEMICOLON, FIELD_SEPARATOR_POSSIBLE_VALUE_TAB)
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
             .description("Specify the field separator to be used to split the incomming flow file content. The content must be a single row of CSV data. This separator is also used to split the fields of the header row.")
             .build();
@@ -253,22 +253,22 @@ public class ExecuteRuleEngine extends AbstractProcessor
     {
         // faced problems when having \t as an attribute and could not find a solution
     	// so using allowable values instead and translating them here
-    	if(context.getProperty(ATTRIBUTE_FIELD_SEPARATOR).getValue().equals(FIELD_SEPERATOR_POSSIBLE_VALUE_COMMA))
+    	if(context.getProperty(ATTRIBUTE_FIELD_SEPARATOR).getValue().equals(FIELD_SEPARATOR_POSSIBLE_VALUE_COMMA))
         {
-        	separator = SEPERATOR_COMMA;
+        	separator = SEPARATOR_COMMA;
         }
-        else if(context.getProperty(ATTRIBUTE_FIELD_SEPARATOR).getValue().equals(FIELD_SEPERATOR_POSSIBLE_VALUE_SEMICOLON))
+        else if(context.getProperty(ATTRIBUTE_FIELD_SEPARATOR).getValue().equals(FIELD_SEPARATOR_POSSIBLE_VALUE_SEMICOLON))
         {
-        	separator = SEPERATOR_SEMICOLON;
+        	separator = SEPARATOR_SEMICOLON;
         }
-        else if(context.getProperty(ATTRIBUTE_FIELD_SEPARATOR).getValue().equals(FIELD_SEPERATOR_POSSIBLE_VALUE_TAB))
+        else if(context.getProperty(ATTRIBUTE_FIELD_SEPARATOR).getValue().equals(FIELD_SEPARATOR_POSSIBLE_VALUE_TAB))
         {
-        	separator = SEPERATOR_TAB;
+        	separator = SEPARATOR_TAB;
         }
     	// just in case...
         else
         {
-        	separator = SEPERATOR_COMMA;
+        	separator = SEPARATOR_COMMA;
         }
     	
     	// create a RowFieldCollection
@@ -373,6 +373,8 @@ public class ExecuteRuleEngine extends AbstractProcessor
                 {
                     // get the flow file content
                     String originalContent = IOUtils.toString(in, "UTF-8");
+                     
+                    //a row of data
                     String row = null;
                     
                     // split the content into rows - might be multiple ones
@@ -474,6 +476,7 @@ public class ExecuteRuleEngine extends AbstractProcessor
                 		logger.debug("running business ruleengine...");
                 		ruleEngine.run("flowfile",rowFieldCollection);
         		        
+                		// add some debugging output that might be useful
         		        logger.debug("number of rulegroups: " + ruleEngine.getNumberOfGroups());
         		        logger.debug("number of rulegroups passed: " + ruleEngine.getNumberOfGroupsPassed());
         		        logger.debug("number of rulegroups failed: " + ruleEngine.getNumberOfGroupsFailed());
@@ -486,13 +489,12 @@ public class ExecuteRuleEngine extends AbstractProcessor
         		    	// put the name of the ruleengine zip file in the list of properties
         		        propertyMap.put(PROPERTY_RULEENGINE_ZIPFILE_NAME, context.getProperty(ATTRIBUTE_RULEENGINE_ZIPFILE).getValue() );
         		        
-        		        // add some properties of the ruleengine execution
+        		        // add some properties of the ruleengine execution to the flowfile
         		        addRuleEngineProperties(propertyMap, ruleEngine);
         		        
         		        // process only if the collection of fields was changed by
         		        // a ruleengine action. this means the data was updated so
-        		        // we have to re-write/re-create the flow file content.
-        		        // if a header is present, then we have to put the header in the content first.
+        		        // we will have to re-write/re-create the flow file content.
        		        	if(rowFieldCollection.isCollectionUpdated())
         		        {
        		        		collectionUpdated.set(true);
@@ -570,7 +572,7 @@ public class ExecuteRuleEngine extends AbstractProcessor
         // put the map to the flow file
         flowFile = session.putAllAttributes(flowFile, propertyMap);
         
-        // if the user wants detailed results, then we clone the flow file, add the ruleengine message for 
+        // if the user configured detailed results, then we clone the flow file, add the ruleengine message for 
         // each rule to the properties and transmit the flow file to the detailed relationship
         if(context.getProperty(ATTRIBUTE_OUTPUT_DETAILED_RESULTS).getValue().equals("true"))
         {
@@ -592,7 +594,7 @@ public class ExecuteRuleEngine extends AbstractProcessor
 	                	   	StringBuffer detailedFlowFileContent = new StringBuffer();
 	                	   	
 	                	   	// add the header if there is one
-	                	   	if(headerRow.get() !=null)
+	                	   	if(headerRow.get()!=null)
 	                	   	{
 	                	   		detailedFlowFileContent.append(headerRow.get());
 	                	   	}
@@ -605,7 +607,7 @@ public class ExecuteRuleEngine extends AbstractProcessor
 	        	            	
 	        	            	try
 	        	            	{
-	        		            	// loop over all subgroups
+	        		            	// loop over all subgroups of the group
 	        		        		for(int g=0;g<group.getSubGroups().size();g++)
 	        		                {
 	        		            		RuleSubGroup subgroup = group.getSubGroups().get(g);
@@ -614,10 +616,13 @@ public class ExecuteRuleEngine extends AbstractProcessor
 	        		            		// loop over all results
 	        		            		for (int h= 0;h< results.size();h++)
 	        		                    {
+	        		            			// one result of one rule execution
 	        		            			RuleExecutionResult result = results.get(h);
+	        		            			// the corresponding rule that was executed
 	        		            			XmlRule rule = result.getRule();
 	                	   	
 	        		            			// check if rulegroup and rule are according to the output type settings
+	        		            			// otherwise we don't need to output the data
 	        		            			if(ouputType.equals(OUTPUT_TYPE_ALL_GROUPS_ALL_RULES) || (ouputType.equals(OUTPUT_TYPE_FAILED_GROUPS_FAILED_RULES) && group.getFailed()==1 && rule.getFailed()==1) || (ouputType.equals(OUTPUT_TYPE_FAILED_GROUPS_PASSED_RULES) && group.getFailed()==1 && rule.getFailed()==0)|| ouputType.equals(OUTPUT_TYPE_FAILED_GROUPS_ALL_RULES) && group.getFailed()==1 || (ouputType.equals(OUTPUT_TYPE_PASSED_GROUPS_FAILED_RULES) && group.getFailed()==0 && rule.getFailed()==1)  || (ouputType.equals(OUTPUT_TYPE_PASSED_GROUPS_PASSED_RULES) && group.getFailed()==0 && rule.getFailed()==0) || (ouputType.equals(OUTPUT_TYPE_PASSED_GROUPS_ALL_RULES) && group.getFailed()==0))
 	        		            			{
 	        		            				// append the content 
@@ -625,6 +630,8 @@ public class ExecuteRuleEngine extends AbstractProcessor
 	        		   				        	// add a separator
 	        			   					    detailedFlowFileContent.append(separator);
 	        			   					    
+	        			   					    // append basic information to each row of the flowfile
+	        			   					    // so that the rulegroup, subgroup and rule can be identified
 	        			   					    detailedFlowFileContent.append( group.getId());
 	        			   					    detailedFlowFileContent.append(separator);
 	        			   				        
