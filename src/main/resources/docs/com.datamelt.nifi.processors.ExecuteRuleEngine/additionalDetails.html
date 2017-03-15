@@ -2,13 +2,13 @@
 <html lang="en">
     <head>
         <meta charset="utf-8"/>
-        <title>RuleEngine Processor</title>
+        <title>ExecuteRuleEngine Processor</title>
         <link rel="stylesheet" href="../../css/component-usage.css" type="text/css"/>
     </head>
 
     <body>
         <!-- Processor Documentation ================================================== -->
-		<h3>Additional details for the RuleEngine processor</h3>
+		<h3>Additional details for the ExecuteRuleEngine processor</h3>
         <p>
             The Processor runs the business rules engine - JaRE - against the content of a flow file.
             The flow file is expected to be a single line of CSV data. The business logic in a ruleengine project 
@@ -35,11 +35,12 @@
         	Because the business logic is separated from the Nifi flow and processors, when the business logic changes, the Nifi flow does not have to be changed. 
         	Instead the business logic is updated externally in the Business Rules Maintenance Tool and a new project zip file is exported to be used with the Nifi RuleEngine processor. This makes defining and changing business logic very agile and at the same time keeps 
         	the Nifi flow itself slim. It avoids clutter in the flow and thus enhance the quality - a slim flow will be easier to manage and less errors will occur.
-        
         </p>
         <p>
         	If the processor is configured to output detailed results then a new flow file is created and routed to the &quot;detailed output&quot; relationship. The content of the flow file will be the original content multiplied by the number of rules in the ruleengine 
-        	project zip file. So for one row of data an 50 rules, the flow will contains 50 rows. Each row shows the detailed result of the execution of one business rule.
-        </p>
+        	project zip file. So for one row of data and 20 rules, the flow file will contain 20 rows. The number of output lines also depends on the selected output type. Each row shows the detailed result of the execution of one business rule.
+        	<br/>	
+        	Following fields are output to the content of the flowfile: the origianl flow file content plus: name of the rulegroup, indicator if the rulegroup failed, name of the subgroup, indicator if the subgroup failed, logical connector to the previous subgroup, logical connector between the rules, name of the rule, indicator if the rule failed.
+	    </p>
     </body>
 </html>
