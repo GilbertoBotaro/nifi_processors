@@ -39,6 +39,7 @@ import org.apache.nifi.processor.ProcessorInitializationContext;
 import org.apache.nifi.processor.Relationship;
 import org.apache.nifi.annotation.behavior.SideEffectFree;
 import org.apache.nifi.annotation.documentation.CapabilityDescription;
+import org.apache.nifi.annotation.documentation.SeeAlso;
 import org.apache.nifi.annotation.documentation.Tags;
 import org.apache.nifi.processor.exception.ProcessException;
 import org.apache.nifi.processor.io.InputStreamCallback;
@@ -68,14 +69,14 @@ import org.apache.nifi.processor.util.StandardValidators;
  * column_002 = New York
  * column_003 = USA
  *
- * @author uwe geercken - last update 2016-03-19
+ * @author uwe geercken - last update 2017-03-18
  */
 
 @SideEffectFree
-@Tags({"CSV", "attributes", "split"})
-@CapabilityDescription("Splits the content from a flowfile into individual columns. The flow file is expected to be a single line of CSV data. The resulting attribute contains field prefix plus the column positional "
-        + "number and the value from the content as an attribute.")
-
+@Tags({"CSV", "attributes", "split", "text"})
+@CapabilityDescription("Splits the content from a flowfile - must be a single line of CSV data - into individual columns and assigns them to flow file attributes. The resulting attributes are named using the field prefix plus the column position in the CSV row "
+        + "and the value from the content as an attribute.")
+@SeeAlso(MergeTemplate.class)
 public class SplitToAttribute extends AbstractProcessor {
     private List<PropertyDescriptor> properties;
     private Set<Relationship> relationships;

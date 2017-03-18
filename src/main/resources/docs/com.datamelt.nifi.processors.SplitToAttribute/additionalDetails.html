@@ -25,5 +25,22 @@
         <p>
             Processor splits a row of CSV data into flow file attributes using a given separator.
         </p>
+        <p>
+        	The CSV row is split to it's fields using the defined separator. Each field value is assigned to a flow file attribute. 
+        	The attribute will be named according to the value defined in &quot;Attribute prefix&quot; plus a running number for the field from the CSV row. The number format is defined 
+        	by the property &quot;Field Number Format&quot;.
+        </p>
+        <p>For example a row like this:
+        	<br/><br/>
+     		Peterson, Jenny, New York, USA
+		</p>
+		<p>
+			with hte property &quot;Attribute prefix&quot; set to &quot;column_&quot; and with the property &quot;Field Number Format&quot; set to &quot;000&quot; will be assigned to these flow file attribute:
+			<br/><br/>
+			column_001 = Peterson<br/>
+			column_002 = Jenny<br/>
+			column_003 = New York<br/>
+			column_004 = USA
+		</p>
     </body>
 </html>

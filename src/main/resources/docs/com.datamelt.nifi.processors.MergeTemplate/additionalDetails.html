@@ -13,8 +13,54 @@
         </p>
         <p>
         	Use the SplitToAttribute processor to split the incoming data row - a single row of CSV data - into individual fields and assign these fields 
-        	to flow file attributes. The MergeTemplate processor then merges the attributes with an Apache Velocity template and the flow file content then 
+        	to flow file attributes. The MergeTemplate processor then merges the attributes with an Apache Velocity template and the flow file content  
         	contains the result of the merge operation.
         </p>
+        <p>
+        		Here is an example of one row from the data:
+        </p>
+		<p>
+			Peterson, Jenny, New York, USA
+		</p>
+		<p>
+			The SplitToAttribute processor will assign the values of the data row to flow file attributes. The attribute &quot;Attribute prefix&quot; defines which prefix the attribute should have 
+			and adds a running number for each element (field) of the data row like this e.g.:
+			<br/><br/>
+			column_001 = Peterson<br/>
+			column_002 = Jenny<br/>
+			column_003 = New York<br/>
+			column_004 = USA
+		</p>
+		<p>	
+			And then simple idea is to reformat the values to e.g. JSON format like this:
+			<br/><br/>
+        	{<br/>
+        	"name": "Peterson",<br/>
+        	"first": "Jenny",<br/>
+        	"city": "New York",<br/>
+        	"country": "USA"<br/>
+        	}
+    	</p>
+    	<p>
+    		To achieve this simply create a template - a simple text file that is placed in the filesystem. Specify in the properties of the processor the path where the template is situated and the name of the template. In the template, replace the values in the JSON example above with placeholders like this:
+    		<br/><br/>
+		    {<br/>
+		    "name": "$column_000",<br/>
+        	"first": "$column_001",<br/>
+        	"city": "$column_002",<br/>
+        	"country": "$column_003"<br/>
+        	}
+    	</p>
+    	<p>
+    		The placeholders in the template will be replaced with the real values from the relevant attributes. The result will be placed in the flow file content.
+    	</p>
+    	<p>
+    		For more details about the Apache Velocity template engine and the use of templates go to the <a href="http://velocity.apache.org">Apache Velocity</a> website
+    	</p>
+    	
+    	
+    	
+    	
+    	
     </body>
 </html>

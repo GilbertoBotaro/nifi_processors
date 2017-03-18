@@ -46,6 +46,7 @@ import org.apache.nifi.processor.ProcessorInitializationContext;
 import org.apache.nifi.processor.Relationship;
 import org.apache.nifi.annotation.behavior.SideEffectFree;
 import org.apache.nifi.annotation.documentation.CapabilityDescription;
+import org.apache.nifi.annotation.documentation.SeeAlso;
 import org.apache.nifi.annotation.documentation.Tags;
 import org.apache.nifi.annotation.lifecycle.OnScheduled;
 import org.apache.nifi.annotation.lifecycle.OnStopped;
@@ -101,13 +102,13 @@ import org.apache.velocity.app.VelocityEngine;
  * 
  * 
  *
- * @author uwe geercken - last update 2017-03-04
+ * @author uwe geercken - last update 2017-03-18
  */
 @SideEffectFree
-@Tags({"Template Engine", "Template", "Apache Velocity", "CSV", "format", "convert"})
-@CapabilityDescription("Takes the attributes of a flowfile, merges them with an Apache Velocity template and replaces the content of the flowfile with the result. Specifying the name of an attribute in the template - using following format: $<attribute name> (example: $column_001) - will replace this placeholder with the actual value from the attribute."
-						+ "You can use the SplitToAttribute processor to split the flow file content using a defined separator and assign the values to attributes.")
-
+@Tags({"Template Engine", "Template", "text", "CSV", "format", "merge", "convert", "attributes"})
+@CapabilityDescription("Takes the attributes of a flowfile, merges them with the placeholders in an Apache Velocity template and replaces the content of the flowfile with the result. Specifying the name of an attribute in the template - using following format: $<attribute name> (example: $column_001) - will replace this placeholder in the template with the actual value from the attribute."
+						+ "You can use the SplitToAttribute processor to split the flow file content of a CSV row using a defined separator and assign the values to attributes.")
+@SeeAlso(SplitToAttribute.class)
 public class MergeTemplate extends AbstractProcessor
 {
    
