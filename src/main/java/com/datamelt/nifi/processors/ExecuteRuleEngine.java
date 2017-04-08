@@ -62,6 +62,7 @@ import com.datamelt.rules.core.RuleGroup;
 import com.datamelt.rules.core.RuleSubGroup;
 import com.datamelt.rules.core.XmlRule;
 import com.datamelt.rules.engine.BusinessRulesEngine;
+import com.datamelt.util.HeaderRow;
 import com.datamelt.util.RowField;
 import com.datamelt.util.RowFieldCollection;
 import com.datamelt.util.Splitter;
@@ -79,7 +80,7 @@ import com.datamelt.util.Splitter;
  * is split into its individual fields using the given field separator.
  * <p>
 
- * @author uwe geercken - last update 2017-03-14
+ * @author uwe geercken - last update 2017-03-15
  */
 
 @SideEffectFree
@@ -114,11 +115,10 @@ public class ExecuteRuleEngine extends AbstractProcessor
 
     private String separator;
     
-    // collection of field names (header) and field values
-    private RowFieldCollection rowFieldCollection;
     
-    // the list of field names to use
-    private static String [] fieldNames;
+    
+    // HeaderRow instance containing the given field names
+    private static HeaderRow headerFromFieldNames;
     
     // the business rules engine to execute business logic against data
     private static BusinessRulesEngine ruleEngine 								= null;
@@ -225,7 +225,7 @@ public class ExecuteRuleEngine extends AbstractProcessor
 
     public static final Relationship DETAILED_RESULTS = new Relationship.Builder()
             .name(RELATIONSHIP_DETAILED_OUTPUT_NAME)
-            .description("The ruleengine detailed results of the business rules execution.")
+            .description("The ruleengine detailed results of the business rules execution according to the output detailed results type selection.")
             .build();
 
     @Override
@@ -271,14 +271,11 @@ public class ExecuteRuleEngine extends AbstractProcessor
         	separator = SEPARATOR_COMMA;
         }
     	
-    	// create a RowFieldCollection
-    	rowFieldCollection = new RowFieldCollection();
-    	
+    	// if field names are specified
     	if(context.getProperty(ATTRIBUTE_FIELD_NAMES)!=null && !context.getProperty(ATTRIBUTE_FIELD_NAMES).getValue().equals(""))
     	{
-    		// split the field names into an array
-        	fieldNames = context.getProperty(ATTRIBUTE_FIELD_NAMES).getValue().split(FIELD_NAMES_SEPARATOR);
-        	rowFieldCollection.setFieldNames(fieldNames);
+    		// create a HeaderRow instance
+    		headerFromFieldNames = new HeaderRow(context.getProperty(ATTRIBUTE_FIELD_NAMES).getValue(),FIELD_NAMES_SEPARATOR);
     	}
     	
     	// get the zip file, containing the business rules
@@ -310,9 +307,8 @@ public class ExecuteRuleEngine extends AbstractProcessor
                 
                 // output basic info about the ruleengine initialization
                 getLogger().info("initialized business rule engine version: " + BusinessRulesEngine.getVersion() + " using " + context.getProperty(ATTRIBUTE_RULEENGINE_ZIPFILE).getValue() + ", last modified: [" + fileLastModifiedDateAsString + "]");
-                
+                // display the field seperator used
                 getLogger().debug("field separator to split row into fields: " + context.getProperty(ATTRIBUTE_FIELD_SEPARATOR).getValue());
-            
                 // we display the number of rulegroups contained in the zip file
                 getLogger().debug("number of rulegroups in project zip file: " + ruleEngine.getNumberOfGroups());
 
@@ -355,7 +351,9 @@ public class ExecuteRuleEngine extends AbstractProcessor
     	final AtomicReference<Boolean> collectionUpdated = new AtomicReference<>();
     	collectionUpdated.set(false);
     	
-    	final AtomicReference<String> headerRow = new AtomicReference<>();
+    	final AtomicReference<HeaderRow> headerFromContent = new AtomicReference<>();
+    	
+    	final AtomicReference<RowFieldCollection> rowFieldCollection = new AtomicReference<>();
     	
     	// get the flow file
     	FlowFile flowFile = session.get();
@@ -390,7 +388,7 @@ public class ExecuteRuleEngine extends AbstractProcessor
                     	{
                     		logger.debug("found 2 rows in flow file content - assuming 1 header row and 1 data row");
                     		// first row is the header row
-                    		headerRow.set(originalContentRows[0]);
+                    		headerFromContent.set(new HeaderRow(originalContentRows[0],separator));
                     		// second row is the data
                     		row = originalContentRows[1];
                     	}
@@ -399,7 +397,7 @@ public class ExecuteRuleEngine extends AbstractProcessor
                     	{
                     		logger.debug("found 1 row in flow file content - assuming 1 header row");
                     		// first row is the header row but no further rows found (no data)
-                    		headerRow.set(originalContentRows[0]);
+                    		headerFromContent.set(new HeaderRow(originalContentRows[0],separator));
                     	}
                     	// we have no rows of data
                     	else if(originalContentRows!=null && originalContentRows.length==0)
@@ -417,7 +415,7 @@ public class ExecuteRuleEngine extends AbstractProcessor
                     		{
                     			logger.warn("found more than 2 rows in flow file content - assuming header row and data row and ignoring additional rows");
                     			// first row is the header row
-                    			headerRow.set(originalContentRows[0]);
+                    			headerFromContent.set(new HeaderRow(originalContentRows[0],separator));
                     			// second row is the data
                     			row = originalContentRows[1];
                     		}
@@ -460,17 +458,9 @@ public class ExecuteRuleEngine extends AbstractProcessor
                 		Splitter splitter = new Splitter(Splitter.TYPE_COMMA_SEPERATED,separator);
                 		logger.debug("created Splitter object using separator: [" + separator + "]");
 
-                		// if we have a header row split it into its fields and put it in the collection
-                		if(headerRow.get()!=null && !headerRow.get().trim().equals(""))
-                		{
-                			String[] headerFields = headerRow.get().split(separator);
-                			rowFieldCollection.setFieldNames(headerFields);
-                			logger.debug("splitted header row into fields: " + headerFields.length + " number of fields");
-                		}
-
                 		// put the values of the fields of the CSV row into a collection
-                		rowFieldCollection.setFields(splitter.getFields(row)); 
-                		logger.debug("RowFieldCollection contains: " + rowFieldCollection.getNumberOfFields() + " number of fields");
+                		rowFieldCollection.set(new RowFieldCollection(headerFromFieldNames, splitter.getFields(row))); 
+                		logger.debug("RowFieldCollection contains: " + rowFieldCollection.get().getNumberOfFields() + " number of fields");
                 		
         		        // run the ruleengine with the given data from the flow file
                 		logger.debug("running business ruleengine...");
@@ -495,7 +485,7 @@ public class ExecuteRuleEngine extends AbstractProcessor
         		        // process only if the collection of fields was changed by
         		        // a ruleengine action. this means the data was updated so
         		        // we will have to re-write/re-create the flow file content.
-       		        	if(rowFieldCollection.isCollectionUpdated())
+       		        	if(rowFieldCollection.get().isCollectionUpdated())
         		        {
        		        		collectionUpdated.set(true);
        		        		logger.debug("data was modified by an ruleengine action - reconstructing content");
@@ -528,7 +518,7 @@ public class ExecuteRuleEngine extends AbstractProcessor
         	try
         	{
         		// get the updated row from the collection
-        		updatedContent.set(getResultRow(rowFieldCollection));
+        		updatedContent.set(getResultRow(rowFieldCollection.get()));
         	}
         	catch(Exception ex)
         	{
@@ -549,12 +539,13 @@ public class ExecuteRuleEngine extends AbstractProcessor
                 	   StringBuffer content = new StringBuffer();
 
                 	   // append the header row if present
-	       		        if(context.getProperty(ATTRIBUTE_HEADER_PRESENT).getValue().equals("true") && headerRow!=null && !headerRow.get().trim().equals(""))
+	       		        if(context.getProperty(ATTRIBUTE_HEADER_PRESENT).getValue().equals("true") && headerFromContent.get()!=null && headerFromContent.get().getNumberOfFields()>0)
 	       		        {
-	       		        	content.append(headerRow);
+	       		        	String headerRow = headerFromContent.get().getFieldNamesWithSeparator();
+	       		        	content.append(headerRow); 
 	       		        	// if the header row does not have a line separator at the end then add it
-	       		        	if(!headerRow.get().endsWith(System.lineSeparator()))
-	       		        	{
+	       		        	if(!headerRow.endsWith(System.lineSeparator()))
+	       		        	{ 
 	       		        		content.append(System.lineSeparator());
 	       		        	}
 	       		        }
@@ -592,12 +583,18 @@ public class ExecuteRuleEngine extends AbstractProcessor
 	                   public void process(final OutputStream out) throws IOException 
 	                   {
 	                	   	StringBuffer detailedFlowFileContent = new StringBuffer();
-	                	   	
+
 	                	   	// add the header if there is one
-	                	   	if(headerRow.get()!=null)
-	                	   	{
-	                	   		detailedFlowFileContent.append(headerRow.get());
-	                	   	}
+	                	   	if(context.getProperty(ATTRIBUTE_HEADER_PRESENT).getValue().equals("true") && headerFromContent.get()!=null && headerFromContent.get().getNumberOfFields()>0)
+		       		        {
+		       		        	String headerRow = headerFromContent.get().getFieldNamesWithSeparator();
+		       		        	detailedFlowFileContent.append(headerRow); 
+		       		        	// if the header row does not have a line separator at the end then add it
+		       		        	if(!headerRow.endsWith(System.lineSeparator()))
+		       		        	{ 
+		       		        		detailedFlowFileContent.append(System.lineSeparator());
+		       		        	}
+		       		        }
 	                	   	
 	                	   	// loop over all groups
 	                	   	for(int f=0;f<ruleEngine.getGroups().size();f++)
