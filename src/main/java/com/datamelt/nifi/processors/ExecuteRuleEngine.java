@@ -22,19 +22,23 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.Reader;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
+import java.util.ListIterator;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.zip.ZipFile;
 
 import org.apache.commons.io.IOUtils;
+import org.apache.commons.io.LineIterator;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.components.state.Scope;
 import org.apache.nifi.flowfile.FlowFile;
@@ -57,6 +61,7 @@ import org.apache.nifi.processor.io.InputStreamCallback;
 import org.apache.nifi.processor.io.OutputStreamCallback;
 import org.apache.nifi.processor.util.StandardValidators;
 
+import com.datamelt.nifi.util.RuleEngineRow;
 import com.datamelt.rules.core.RuleExecutionResult;
 import com.datamelt.rules.core.RuleGroup;
 import com.datamelt.rules.core.RuleSubGroup;
@@ -80,7 +85,7 @@ import com.datamelt.util.Splitter;
  * is split into its individual fields using the given field separator.
  * <p>
 
- * @author uwe geercken - last update 2017-03-15
+ * @author uwe geercken - last update 2017-04-09
  */
 
 @SideEffectFree
@@ -112,11 +117,10 @@ public class ExecuteRuleEngine extends AbstractProcessor
 	private List<PropertyDescriptor> properties;
 	// set of relationships
     private Set<Relationship> relationships;
-
+    
+    // separator of the csv data
     private String separator;
-    
-    
-    
+
     // HeaderRow instance containing the given field names
     private static HeaderRow headerFromFieldNames;
     
@@ -138,23 +142,26 @@ public class ExecuteRuleEngine extends AbstractProcessor
     // names/labels of the processor attributes
     private static final String RULEENGINE_ZIPFILE_PROPERTY_NAME 				= "Ruleengine Project Zip File";
     private static final String FIELD_SEPERATOR_PROPERTY_NAME 					= "Field Separator";
-    private static final String HEADER_PRESENT_PROPERTY_NAME 					= "Header present";
+    private static final String HEADER_PRESENT_PROPERTY_NAME 					= "Header row present";
     private static final String FIELD_NAMES_PROPERTY_NAME 						= "Field Names";
     private static final String RULEENGINE_OUTPUT_DETAILS 						= "Output detailed results";
     private static final String RULEENGINE_OUTPUT_DETAILS_TYPE					= "Output detailed results type";
+    private static final String BATCH_SIZE_NAME									= "Rows batch size";
     
     // relationships
+    private static final String RELATIONSHIP_ORIGINAL_NAME 						= "original";
     private static final String RELATIONSHIP_SUCESS_NAME 						= "success";
     private static final String RELATIONSHIP_DETAILED_OUTPUT_NAME				= "detailed output";
 
     // separator used to split up the defined field names
     private static final String FIELD_NAMES_SEPARATOR 							= ",";
     
+    // possible delimiter types
     private static final String FIELD_SEPARATOR_POSSIBLE_VALUE_COMMA			= "Comma";
     private static final String FIELD_SEPARATOR_POSSIBLE_VALUE_SEMICOLON		= "Semicolon";
     private static final String FIELD_SEPARATOR_POSSIBLE_VALUE_TAB				= "Tab";
     
-    
+    // output types for ruleengine details
     private static final String OUTPUT_TYPE_ALL_GROUPS_ALL_RULES				= "all groups - all rules";
     private static final String OUTPUT_TYPE_FAILED_GROUPS_FAILED_RULES			= "failed groups - failed rules only ";
     private static final String OUTPUT_TYPE_FAILED_GROUPS_PASSED_RULES			= "failed groups - passed rules only ";
@@ -163,10 +170,14 @@ public class ExecuteRuleEngine extends AbstractProcessor
     private static final String OUTPUT_TYPE_PASSED_GROUPS_PASSED_RULES			= "passed groups - passed rules only";
     private static final String OUTPUT_TYPE_PASSED_GROUPS_ALL_RULES				= "passed groups - all rules";
     
+    private static final String DEFAULT_BATCH_SIZE								= "100";
+    
+    // possible delimiter types
     private static final String SEPARATOR_COMMA									= ",";
     private static final String SEPARATOR_SEMICOLON								= ";";
     private static final String SEPARATOR_TAB									= "\t";
     
+    // names for the processor state
     private static final String STATE_MANAGER_FILENAME							= "ruleengine.zipfile.latest";
     private static final String STATE_MANAGER_FILENAME_LASTMODIFIED				= "ruleengine.zipfile.lastModified";
     
@@ -206,6 +217,7 @@ public class ExecuteRuleEngine extends AbstractProcessor
             .name(RULEENGINE_OUTPUT_DETAILS)
             .required(true)
             .allowableValues("true","false")
+            .addValidator(StandardValidators.BOOLEAN_VALIDATOR)
             .defaultValue("false")
             .description("Specify if the detailed results should be output. This creates flow files containing one row of data per rule (!). E.g. if you have one row of data and 10 rules, the flowfile contains 10 rows with the detailed results for each rule.")
             .build();
@@ -218,9 +230,22 @@ public class ExecuteRuleEngine extends AbstractProcessor
             .description("Specify which detailed results should be output.")
             .build();
 
+    public static final PropertyDescriptor ATTRIBUTE_BATCH_SIZE = new PropertyDescriptor.Builder()
+            .name(BATCH_SIZE_NAME)
+            .required(true)
+            .defaultValue(DEFAULT_BATCH_SIZE)
+            .addValidator(StandardValidators.NON_NEGATIVE_INTEGER_VALIDATOR)
+            .description("Specify the batch size of rows to process. After the number of rows is reached the flow files are created.")
+            .build();
+    
+    public static final Relationship ORIGINAL = new Relationship.Builder()
+            .name(RELATIONSHIP_ORIGINAL_NAME)
+            .description("The original flow file is routed to this relation.")
+            .build();
+    
     public static final Relationship SUCCESS = new Relationship.Builder()
             .name(RELATIONSHIP_SUCESS_NAME)
-            .description("The ruleengine successfully executed the business rules against the flow file content.")
+            .description("The ruleengine results for each row of the incomming flow file.")
             .build();
 
     public static final Relationship DETAILED_RESULTS = new Relationship.Builder()
@@ -239,10 +264,12 @@ public class ExecuteRuleEngine extends AbstractProcessor
         properties.add(ATTRIBUTE_FIELD_SEPARATOR);
         properties.add(ATTRIBUTE_OUTPUT_DETAILED_RESULTS);
         properties.add(ATTRIBUTE_OUTPUT_DETAILED_RESULTS_TYPE);
+        properties.add(ATTRIBUTE_BATCH_SIZE);
         this.properties = Collections.unmodifiableList(properties);
 
         // add relationships to set
         Set<Relationship> relationships = new HashSet<>();
+        relationships.add(ORIGINAL);
         relationships.add(SUCCESS);
         relationships.add(DETAILED_RESULTS);
         this.relationships = Collections.unmodifiableSet(relationships);
@@ -276,6 +303,7 @@ public class ExecuteRuleEngine extends AbstractProcessor
     	{
     		// create a HeaderRow instance
     		headerFromFieldNames = new HeaderRow(context.getProperty(ATTRIBUTE_FIELD_NAMES).getValue(),FIELD_NAMES_SEPARATOR);
+    		getLogger().debug("field names defined - fields found: [" + headerFromFieldNames.getNumberOfFields());
     	}
     	
     	// get the zip file, containing the business rules
@@ -348,12 +376,8 @@ public class ExecuteRuleEngine extends AbstractProcessor
         // get a logger instance
     	final ComponentLog logger = getLogger();
     	
-    	final AtomicReference<Boolean> collectionUpdated = new AtomicReference<>();
-    	collectionUpdated.set(false);
-    	
-    	final AtomicReference<HeaderRow> headerFromContent = new AtomicReference<>();
-    	
-    	final AtomicReference<RowFieldCollection> rowFieldCollection = new AtomicReference<>();
+    	// a header from the content if present
+    	final AtomicReference<HeaderRow> header = new AtomicReference<>();
     	
     	// get the flow file
     	FlowFile flowFile = session.get();
@@ -362,6 +386,19 @@ public class ExecuteRuleEngine extends AbstractProcessor
             return;
         }
 
+        // list of rows from splitting the original flow file content
+        ArrayList<RuleEngineRow> flowFileRows = new ArrayList<RuleEngineRow>();
+        
+        // list of rows containing the detailed results of the ruleengine
+        ArrayList<RuleEngineRow> flowFileDetails = new ArrayList<RuleEngineRow>();
+        
+        boolean headerPresent = context.getProperty(ATTRIBUTE_HEADER_PRESENT).getValue().equals("true");
+        
+        // put the name of the ruleengine zip file in the list of properties
+        propertyMap.put(PROPERTY_RULEENGINE_ZIPFILE_NAME, context.getProperty(ATTRIBUTE_RULEENGINE_ZIPFILE).getValue() );
+        
+        final int batchSize = Integer.parseInt(context.getProperty(BATCH_SIZE_NAME).getValue());
+        
         // read flow file into input stream
         session.read(flowFile, new InputStreamCallback() 
         {
@@ -369,137 +406,138 @@ public class ExecuteRuleEngine extends AbstractProcessor
             {
                 try 
                 {
-                    // get the flow file content
-                    String originalContent = IOUtils.toString(in, "UTF-8");
-                     
-                    //a row of data
-                    String row = null;
-                    
-                    // split the content into rows - might be multiple ones
-                    String[] originalContentRows = originalContent.split(System.lineSeparator());
-                    
-                    // check if configuration indicates that a header row is present
-                    if(context.getProperty(ATTRIBUTE_HEADER_PRESENT).getValue().equals("true"))
+                	// iterator over the lines from the input stream
+                	LineIterator iterator = IOUtils.lineIterator(in, "utf-8");
+                	
+                    // check if configuration indicates that a header row is present in the flow file content
+                    if(headerPresent)
                     {
-                    	logger.debug("configuration indicates a (1) header row is present");
-                    	
-                    	// we have two rows of data
-                    	if(originalContentRows!=null && originalContentRows.length==2)
+                    	logger.debug("configuration indicates a header row is present in flow file content");
+
+                    	// if there is at least one row of data
+                    	if(iterator.hasNext())
                     	{
-                    		logger.debug("found 2 rows in flow file content - assuming 1 header row and 1 data row");
-                    		// first row is the header row
-                    		headerFromContent.set(new HeaderRow(originalContentRows[0],separator));
-                    		// second row is the data
-                    		row = originalContentRows[1];
-                    	}
-                    	// we have one row of data
-                    	else if(originalContentRows!=null && originalContentRows.length==1)
-                    	{
-                    		logger.debug("found 1 row in flow file content - assuming 1 header row");
-                    		// first row is the header row but no further rows found (no data)
-                    		headerFromContent.set(new HeaderRow(originalContentRows[0],separator));
-                    	}
-                    	// we have no rows of data
-                    	else if(originalContentRows!=null && originalContentRows.length==0)
-                    	{
-                    		// flow file has no rows - is empty
-                    		logger.debug("found 0 rows in flow file content");
-                    	}
-                    	// we have more than two rows of data
-                    	// this should not happen. we use the two rows - 1 row header and 1 row data - and ignore the rest of the rows.
-                    	// the ruleengine works on single rows of data (or single objects), so multiple data rows will not work well in
-                    	// the scenario of flow files
-                    	else
-                    	{
-                    		if(originalContentRows!=null)
-                    		{
-                    			logger.warn("found more than 2 rows in flow file content - assuming header row and data row and ignoring additional rows");
-                    			// first row is the header row
-                    			headerFromContent.set(new HeaderRow(originalContentRows[0],separator));
-                    			// second row is the data
-                    			row = originalContentRows[1];
-                    		}
+                    		// set the header from the content
+	                    	header.set(new HeaderRow(iterator.next(),separator));
                     	}
                     }
-                    // if no header row is present
+                    // if no header row is present in the flow file content
                     else
                     {
-                    	logger.debug("configuration indicates no header row is present");
+                    	logger.debug("configuration indicates no header row is present in flow file content");
                     	
-                    	// we have one row of data
-                    	if(originalContentRows!=null && originalContentRows.length==1)
-                    	{
-                    		// first (and only) row is the data
-                    		row = originalContentRows[0];
-                    	}
-                    	// we have no rows of data
-                    	else if(originalContentRows!=null && originalContentRows.length==0)
-                    	{
-                    		// flow file has no rows - is empty
-                    		logger.debug("found 0 rows in flow file content");
-                    	}
-                    	// we have more than one row of data
-                    	// -- see comment further above --
-                    	else
-                    	{
-                    		if(originalContentRows!=null)
-                    		{
-                    			logger.warn("found more than 1 row in flow file content - assuming data row and ignoring additional rows");	
-                    			// first row is the data
-                    			row = originalContentRows[0];
-                    		}
-                    	}
+                    	// use the header from the field names
+                    	header.set(headerFromFieldNames);
                     }
-                    // check that we have data
-                    if (row != null && !row.trim().equals("")) {
-                        
-                        // use the Splitter class to split the incoming row into fields according to the given separator
-                    	// pass info which separator is used
-                		Splitter splitter = new Splitter(Splitter.TYPE_COMMA_SEPERATED,separator);
-                		logger.debug("created Splitter object using separator: [" + separator + "]");
+                    
+                    // loop over all rows of data
+                    while(iterator.hasNext())
+                    {
+                    	// the row to process
+                    	//String row = originalContentRows[i];
+                    	String row = iterator.next();
+                    	
+	                    // check that we have data
+	                    if (row != null && !row.trim().equals("")) 
+	                    {
+	                    	RowFieldCollection rowFieldCollection = getRowFieldCollection(row,header.get());
 
-                		// put the values of the fields of the CSV row into a collection
-                		rowFieldCollection.set(new RowFieldCollection(headerFromFieldNames, splitter.getFields(row))); 
-                		logger.debug("RowFieldCollection contains: " + rowFieldCollection.get().getNumberOfFields() + " number of fields");
-                		
-        		        // run the ruleengine with the given data from the flow file
-                		logger.debug("running business ruleengine...");
-                		ruleEngine.run("flowfile",rowFieldCollection);
-        		        
-                		// add some debugging output that might be useful
-        		        logger.debug("number of rulegroups: " + ruleEngine.getNumberOfGroups());
-        		        logger.debug("number of rulegroups passed: " + ruleEngine.getNumberOfGroupsPassed());
-        		        logger.debug("number of rulegroups failed: " + ruleEngine.getNumberOfGroupsFailed());
-        		        logger.debug("number of rulegroups skipped: " + ruleEngine.getNumberOfGroupsSkipped());
-        		        logger.debug("number of rules: " + ruleEngine.getNumberOfRules());
-        		        logger.debug("number of rules passed: " + ruleEngine.getNumberOfRulesPassed());
-        		        logger.debug("number of rules failed: " + ruleEngine.getNumberOfRulesFailed());
-        		        logger.debug("number of actions: " + ruleEngine.getNumberOfActions());
-        		    	
-        		    	// put the name of the ruleengine zip file in the list of properties
-        		        propertyMap.put(PROPERTY_RULEENGINE_ZIPFILE_NAME, context.getProperty(ATTRIBUTE_RULEENGINE_ZIPFILE).getValue() );
-        		        
-        		        // add some properties of the ruleengine execution to the flowfile
-        		        addRuleEngineProperties(propertyMap, ruleEngine);
-        		        
-        		        // process only if the collection of fields was changed by
-        		        // a ruleengine action. this means the data was updated so
-        		        // we will have to re-write/re-create the flow file content.
-       		        	if(rowFieldCollection.get().isCollectionUpdated())
-        		        {
-       		        		collectionUpdated.set(true);
-       		        		logger.debug("data was modified by an ruleengine action - reconstructing content");
+                    		logger.debug("RowFieldCollection header contains: " + rowFieldCollection.getHeader().getNumberOfFields() + " fields");
+	                		logger.debug("RowFieldCollection contains: " + rowFieldCollection.getNumberOfFields() + " fields");
+	                		
+	        		        // run the ruleengine with the given data from the flow file
+	                		logger.debug("running business ruleengine...");
+	                		ruleEngine.run("flowfile",rowFieldCollection);
+	        		        
+	                		// add some debugging output that might be useful
+	        		        logger.debug("number of rulegroups: " + ruleEngine.getNumberOfGroups());
+	        		        logger.debug("number of rulegroups passed: " + ruleEngine.getNumberOfGroupsPassed());
+	        		        logger.debug("number of rulegroups failed: " + ruleEngine.getNumberOfGroupsFailed());
+	        		        logger.debug("number of rulegroups skipped: " + ruleEngine.getNumberOfGroupsSkipped());
+	        		        logger.debug("number of rules: " + ruleEngine.getNumberOfRules());
+	        		        logger.debug("number of rules passed: " + ruleEngine.getNumberOfRulesPassed());
+	        		        logger.debug("number of rules failed: " + ruleEngine.getNumberOfRulesFailed());
+	        		        logger.debug("number of actions: " + ruleEngine.getNumberOfActions());
+	        		    	
+	        		        // add some properties of the ruleengine execution to the map
+	        		        addRuleEngineProperties(propertyMap);
+	        		        
+	        		        // process only if the collection of fields was changed by
+	        		        // a ruleengine action. this means the data was updated so
+	        		        // we will have to re-write/re-create the flow file content.
+	       		        	if(rowFieldCollection.isCollectionUpdated())
+	        		        {
+	       		        		// put an indicator that the data was modified by the ruleengine
+	       		        		propertyMap.put(PROPERTY_RULEENGINE_CONTENT_MODIFIED, "true");
+	       		        		
+	       		        		logger.debug("data was modified - updating flow file content with ruleengine results");
+ 		       	        		
+	       		        		// the RuleEngineRow instance will contain the row of data and the map of properties
+	       		        		// and will later be used when the flow files are created
+	       		        		flowFileRows.add(new RuleEngineRow(getResultRow(rowFieldCollection),propertyMap));
+	       		        	}
+	       		        	else
+	       		        	{
+	       		        		// put an indicator that the data was NOT modified by the ruleengine
+	       		        		propertyMap.put(PROPERTY_RULEENGINE_CONTENT_MODIFIED, "false");
+	       		        		
+	       		        		logger.debug("data was not modified - using original content");
 
-       		        		// put an indicator that the data was modified by the ruleengine
-       		        		propertyMap.put(PROPERTY_RULEENGINE_CONTENT_MODIFIED, "true");
-       		        	}
-       		        	else
-       		        	{
-       		        		// put an indicator that the data was NOT modified by the ruleengine
-       		        		propertyMap.put(PROPERTY_RULEENGINE_CONTENT_MODIFIED, "false");
-       		        	}
+	       		        		// the RuleEngineRow instance will contain the row of data and the map of properties
+	       		        		// and will later be used when the flow files are created
+	       		        		flowFileRows.add(new RuleEngineRow(row,propertyMap)); 
+	       		        	}
+	       		        	
+	       		        	if(flowFileRows.size()>=batchSize)
+     	            	   	{
+	       		        		// generate flow files from the individual rows
+	       		        		List<FlowFile> splitFlowFiles = generateFlowFileSplits(context,session,flowFileRows, header.get(), headerPresent);
+	       		        		// transfer all individual rows to success relationship
+	       		        		if(splitFlowFiles.size()>0)
+	       		        		{
+	       		        			session.transfer(splitFlowFiles, SUCCESS);
+	       		        		}
+     	            	   	}
+	       		        	
+	                        // if the user configured detailed results 
+	                        if(context.getProperty(ATTRIBUTE_OUTPUT_DETAILED_RESULTS).getValue().equals("true"))
+	                        {
+	                        	// get the configured output type
+	     		               	String outputType = context.getProperty(ATTRIBUTE_OUTPUT_DETAILED_RESULTS_TYPE).getValue(); 
+	     		               	logger.debug("configuration set to output detailed results with type [" + outputType + "]");
 
-                    }
+	     		               	// we need to create a flow file only, if the ruleengine results are according to the output type settings
+		     		           	if(outputType.equals(OUTPUT_TYPE_ALL_GROUPS_ALL_RULES) 
+		     		           			|| (outputType.equals(OUTPUT_TYPE_FAILED_GROUPS_ALL_RULES) && ruleEngine.getNumberOfGroupsFailed()>0) 
+		     		           			|| (outputType.equals(OUTPUT_TYPE_FAILED_GROUPS_FAILED_RULES) && ruleEngine.getNumberOfGroupsFailed()>0) 
+		     		           			|| (outputType.equals(OUTPUT_TYPE_FAILED_GROUPS_PASSED_RULES) && ruleEngine.getNumberOfGroupsFailed()>0) 
+		     		           			|| (outputType.equals(OUTPUT_TYPE_PASSED_GROUPS_ALL_RULES) && ruleEngine.getNumberOfGroupsPassed()>0) 
+		     		           			|| (outputType.equals(OUTPUT_TYPE_PASSED_GROUPS_FAILED_RULES) && ruleEngine.getNumberOfGroupsPassed()>0 
+		     		           			|| (outputType.equals(OUTPUT_TYPE_PASSED_GROUPS_PASSED_RULES) && ruleEngine.getNumberOfGroupsPassed()>0)))
+		     		           	{
+		     		               	// create the content for the flow file
+		     		               	String content = getFlowFileRuleEngineDetailsContent(header.get(), headerPresent, outputType, row);
+		     		               	
+		     	            	   	// add results to the list
+		     	            	   	flowFileDetails.add(new RuleEngineRow(content,propertyMap));
+		     	            	   	
+		     	            	   	if(flowFileDetails.size()>=batchSize)
+		     	            	   	{
+		     	            	   		List<FlowFile> detailsFlowFiles = generateFlowFilesRuleEngineDetails(context,session,flowFileDetails, header.get(), headerPresent);
+		     	            	   		// transfer all individual rows to detailed relationship
+		     	            	   		if(detailsFlowFiles.size()>0)
+		     	            	   		{
+		     	            	   			session.transfer(detailsFlowFiles, DETAILED_RESULTS);
+		     	            	   		}
+		     	            	   	}
+		     		           	}
+	                        }
+	        		        // clear the collections of ruleengine results
+	        		    	ruleEngine.getRuleExecutionCollection().clear();
+	                    }
+	                }
+                    
+                    LineIterator.closeQuietly(iterator);
                 }
                 catch (Exception ex) 
                 {
@@ -509,192 +547,338 @@ public class ExecuteRuleEngine extends AbstractProcessor
             }
         });
 
-        // variable to keep the updated data row
-    	AtomicReference<String> updatedContent = new AtomicReference<String>();
+        // generate flow files from the individual rows
+        List<FlowFile> splitFlowFiles = generateFlowFileSplits(context,session,flowFileRows, header.get(), headerPresent);
+        
+        // generate flow files from the individual rows
+        List<FlowFile> detailsFlowFiles = generateFlowFilesRuleEngineDetails(context,session,flowFileDetails, header.get(), headerPresent);
 
-    	// if data has changed or we output the details, re-create the content
-        if(collectionUpdated.get()==true || context.getProperty(ATTRIBUTE_OUTPUT_DETAILED_RESULTS).getValue().equals("true"))
+        // transfer the original flow file
+        session.transfer(flowFile,ORIGINAL);
+        
+        // transfer all individual rows to success relationship
+        if(splitFlowFiles.size()>0)
         {
+        	session.transfer(splitFlowFiles, SUCCESS);
+        }
+        
+        // transfer all individual rows to success relationship
+        if(detailsFlowFiles.size()>0)
+        {
+        	session.transfer(detailsFlowFiles, DETAILED_RESULTS);
+        }
+    }
+    
+    /**
+     * generates the flow files for each row of data in the flow file in the form of a list
+     * 
+     * @param context			process context
+     * @param session			process session
+     * @param rows				list of rows from the flow file content
+     * @param header			the header row
+     * @param headerPresent		indicator from the config if a header is present
+     * @param propertyMap		map of properties of the flowfile
+     * @return					list of flow files
+     */
+    
+    private List<FlowFile> generateFlowFileSplits(ProcessContext context, ProcessSession session,ArrayList<RuleEngineRow> rows, HeaderRow header, boolean headerPresent)
+    {
+    	List<FlowFile> splitFlowFiles = new ArrayList<>();
+    	
+    	for(int i=0;i<rows.size();i++)
+    	{
+    		FlowFile splitFlowFile = session.create();
+    		splitFlowFile = updateFlowFileContent(header, headerPresent, context, session, splitFlowFile, rows.get(i));
+    		
+    		// put the properties in the flow file
+    		splitFlowFile = session.putAllAttributes(splitFlowFile, rows.get(i).getMap());
+
+    		splitFlowFiles.add(splitFlowFile);
+    	}
+    	rows.clear();
+    	
+    	getLogger().debug("created list of "+ splitFlowFiles.size() + " flowfiles");
+    	return splitFlowFiles;
+    }
+    
+    /**
+     * updates the content of the flow file for each row of data
+     * 
+     * @param header			the header row
+     * @param headerPresent		indicator from the configuration if a header is present
+     * @param context			process context
+     * @param session			process session
+     * @param someFlowFile		the flow file to update
+     * @param content			the content to write to the flow file
+     * @param propertyMap		map of properties of the flow file
+     * @return					a flow file
+     */
+    private FlowFile updateFlowFileContent(HeaderRow header, boolean headerPresent, final ProcessContext context, final ProcessSession session, FlowFile someFlowFile, RuleEngineRow content)
+    {
+    	// write data to output stream
+    	someFlowFile = session.write(someFlowFile, new OutputStreamCallback() 
+    	{
+           @Override
+           public void process(final OutputStream out) throws IOException 
+           {
+        	   // buffer to hold the row data/content
+        	   StringBuffer buffer = new StringBuffer();
+
+        	   // append the header row if present
+        	   if(headerPresent && header!=null && header.getNumberOfFields()>0)
+        	   {
+					String headerRow = header.getFieldNamesWithSeparator();
+					buffer.append(headerRow); 
+					// if the header row does not have a line separator at the end then add it
+					if(!headerRow.endsWith(System.lineSeparator()))
+					{ 
+						buffer.append(System.lineSeparator());
+					}
+        	   }
+				   
+        	   // append to the buffer
+        	   if(content.getRow()!=null)
+        	   {
+        		   buffer.append(content.getRow());
+        	   }
+        	   final byte[] data = buffer.toString().getBytes();
+        	   out.write(data);
+           }
+    	});
+    	return someFlowFile;
+    }
+    
+    /**
+     * generates the flow files for each row of data for the ruleengine details in the flow file - in the form of a list
+     * 
+     * @param context			process context
+     * @param session			process session
+     * @param detailsRows		array of rows containing the data row and a property map
+     * @param header			the header from the flow file content or the given field names
+     * @param headerPresent		indicator from the configuration if a header is present
+     * @return					a list of flow files
+     */
+    private List<FlowFile> generateFlowFilesRuleEngineDetails(ProcessContext context, ProcessSession session,ArrayList<RuleEngineRow> detailsRows, HeaderRow header, boolean headerPresent)
+    {
+    	List<FlowFile> detailsFlowFiles = new ArrayList<>();
+
+    	for(int i=0;i<detailsRows.size();i++)
+    	{
+			FlowFile detailsFlowFile = session.create();
+			detailsFlowFile = updateFlowFileRuleEngineDetailsContent(header, headerPresent, context, session, detailsFlowFile, detailsRows.get(i));
+		
+			// use the attributes of the original flow file
+			detailsFlowFile = session.putAllAttributes(detailsFlowFile, detailsRows.get(i).getMap());
+			
+			detailsFlowFiles.add(detailsFlowFile);
+    	}
+    	detailsRows.clear();
+    	
+    	getLogger().debug("created list of "+ detailsFlowFiles.size() + " ruleengine details flowfiles");
+    	return detailsFlowFiles;
+    }
+    
+    /**
+     * writes the updated content from the ruleengine to the flow file content.
+     * 
+     * @param header				the header from the content or the field names from the configuration
+     * @param headerPresent			indicator from the configuration if a header is present in the flow file content
+     * @param context				process context
+     * @param session				process session
+     * @param someFlowFile			the flow file
+     * @param content				a row of CSV data
+     * @return						a flow file with updated content
+     */
+    private FlowFile updateFlowFileRuleEngineDetailsContent(HeaderRow header, boolean headerPresent, final ProcessContext context, final ProcessSession session, FlowFile someFlowFile, RuleEngineRow content)
+    {
+    	if(content.getRow()!=null)
+    	{
+	    	// write data to output stream
+	    	someFlowFile = session.write(someFlowFile, new OutputStreamCallback() 
+	    	{
+	               @Override
+	               public void process(final OutputStream out) throws IOException 
+	               {
+	            	   	// write data to content
+	   					final byte[] data = content.getRow().getBytes();
+	   					out.write(data);
+	               }
+	        });
+    	}
+	    return someFlowFile;
+    }
+    
+    /**
+     * construct the content for the flow file for the rule engine details.
+     * 
+     * when the rule engine runs, it produces results per data row and business rules. with 1 data row and 10 rules you get 10 detailed results. these results are output
+     * in one flow file to the details relationship.
+     * 
+     * @param header
+     * @param headerPresent
+     * @param outputType
+     * @param row
+     * @return
+     */
+    private String getFlowFileRuleEngineDetailsContent(HeaderRow header, boolean headerPresent, String outputType, String row)
+    {
+    	StringBuffer detailedFlowFileContent = new StringBuffer();	
+  	   
+        // add the header if there is one
+ 	   	if(headerPresent && header!=null && header.getNumberOfFields()>0)
+        {
+        	String headerRow = header.getFieldNamesWithSeparator();
+        	detailedFlowFileContent.append(headerRow);
+
+        	// if the header row does not have a line separator at the end then add it
+        	if(!headerRow.endsWith(System.lineSeparator()))
+        	{ 
+        		detailedFlowFileContent.append(System.lineSeparator());
+        	}
+        }
+ 	   	
+ 	   	// add the results
+ 	   	detailedFlowFileContent.append(getRuleEngineDetails(outputType,row));
+    	
+    	return detailedFlowFileContent.toString();
+    }
+    
+    /**
+     * creates a RowFieldCollection object from a row of data and a header row. the header can come from a header in the
+     * content or by specifying the names of the individual fields in the configuration.
+     * 
+     * if the header is null then the collection is built without a header. in this case the access to the fields from
+     * the ruleengine needs to be done using the field index number (because we do not have the name of the field).
+     * 
+     * @param row			a row of CSV data
+     * @param header		a HeaderRow object containing the header fields
+     * @return				a RowFieldCollection with fields
+     * @throws Exception	exception when the fields can not be constructed
+     */
+    private RowFieldCollection getRowFieldCollection(String row, HeaderRow header) throws Exception
+    {
+    	// use the Splitter class to split the incoming row into fields according to the given separator
+    	// pass info which separator is used
+		Splitter splitter = new Splitter(Splitter.TYPE_COMMA_SEPERATED,separator);
+
+		// put the values of the fields of the CSV row into a collection
+		if(header!=null)
+		{
+			return new RowFieldCollection(header, splitter.getFields(row));
+		}
+		else
+		{
+			return new RowFieldCollection(splitter.getFields(row));
+		}
+    }
+    
+    /**
+     * when the ruleengine ran, a collection of results is available - if the rules passed or failed, how many failed, how many groups failed,
+     * how many actions failed, a message,  etc.
+     * 
+     * for a given row of CSV data this method produces one row per business rule. each row will contain information about the rule execution.
+     * 
+     * @param outputType		the output type configured in the configuration
+     * @param content			a row of CSV data
+     * @return					the original row multiplied with the number of rules
+     */
+    private String getRuleEngineDetails(String outputType, String content)
+    {
+    	StringBuffer row = new StringBuffer();
+    	
+    	// loop over all groups
+	   	for(int f=0;f<ruleEngine.getGroups().size();f++)
+        {
+	   		// get a rulegroup
+        	RuleGroup group = ruleEngine.getGroups().get(f);
+        	
         	try
         	{
-        		// get the updated row from the collection
-        		updatedContent.set(getResultRow(rowFieldCollection.get()));
+            	// loop over all subgroups of the group
+        		for(int g=0;g<group.getSubGroups().size();g++)
+                {
+            		RuleSubGroup subgroup = group.getSubGroups().get(g);
+            		// get the execution results of the subgroup
+            		ArrayList <RuleExecutionResult> results = subgroup.getExecutionCollection().getResults();
+            		// loop over all results
+            		for (int h= 0;h< results.size();h++)
+                    {
+            			// one result of one rule execution
+            			RuleExecutionResult result = results.get(h);
+            			// the corresponding rule that was executed
+            			XmlRule rule = result.getRule();
+	   	
+            			// check if rulegroup and rule are according to the output type settings
+            			// otherwise we don't need to output the data
+            			if(outputType.equals(OUTPUT_TYPE_ALL_GROUPS_ALL_RULES) 
+            					|| (outputType.equals(OUTPUT_TYPE_FAILED_GROUPS_FAILED_RULES) && group.getFailed()==1 && rule.getFailed()==1) 
+            					|| (outputType.equals(OUTPUT_TYPE_FAILED_GROUPS_PASSED_RULES) && group.getFailed()==1 && rule.getFailed()==0)
+            					|| outputType.equals(OUTPUT_TYPE_FAILED_GROUPS_ALL_RULES) && group.getFailed()==1 
+            					|| (outputType.equals(OUTPUT_TYPE_PASSED_GROUPS_FAILED_RULES) && group.getFailed()==0 && rule.getFailed()==1)  
+            					|| (outputType.equals(OUTPUT_TYPE_PASSED_GROUPS_PASSED_RULES) && group.getFailed()==0 && rule.getFailed()==0)
+            					|| (outputType.equals(OUTPUT_TYPE_PASSED_GROUPS_ALL_RULES) && group.getFailed()==0))
+            			{
+            				// append the content 
+            				row.append(content);
+   				        	// add a separator
+            				row.append(separator);
+	   					    
+	   					    // append information about the ruleengine execution to each flow file
+	   					    // so that the rulegroup, subgroup and rule can be identified
+            				row.append( group.getId());
+            				row.append(separator);
+	   				        
+            				row.append( group.getFailed());
+            				row.append(separator);
+	   					    
+            				row.append( subgroup.getId());
+            				row.append(separator);
+	   					    
+            				row.append( subgroup.getFailed());
+            				row.append(separator);
+	   					    
+            				row.append( subgroup.getLogicalOperatorSubGroupAsString());
+            				row.append(separator);
+	   					    
+            				row.append(subgroup.getLogicalOperatorRulesAsString());
+            				row.append(separator);
+	   					    
+            				row.append(rule.getId());
+            				row.append(separator);
+	   				        
+            				row.append(rule.getFailed());
+            				row.append(separator);
+	   					    
+	   					    // append the resulting ruleengine message of the rule execution
+            				row.append(result.getMessage());
+	   					    
+	   					    // add line separator except last line
+	   					    if(h<results.size()-1)
+	   					    {
+	   					    	row.append(System.lineSeparator());
+	   					    }
+            			}
+                    }
+            	}
         	}
         	catch(Exception ex)
         	{
-        		logger.error("error re-creating the data from the rowfieldcollection");
+        		ex.printStackTrace();
         	}
-        }
-
-        // if the data was updated (by an action)
-        if(collectionUpdated.get()==true)
-        {
-        	// write data to output stream
-        	flowFile = session.write(flowFile, new OutputStreamCallback() 
-        	{
-                   @Override
-                   public void process(final OutputStream out) throws IOException 
-                   {
-  		        		// buffer to hold the row data/content
-                	   StringBuffer content = new StringBuffer();
-
-                	   // append the header row if present
-	       		        if(context.getProperty(ATTRIBUTE_HEADER_PRESENT).getValue().equals("true") && headerFromContent.get()!=null && headerFromContent.get().getNumberOfFields()>0)
-	       		        {
-	       		        	String headerRow = headerFromContent.get().getFieldNamesWithSeparator();
-	       		        	content.append(headerRow); 
-	       		        	// if the header row does not have a line separator at the end then add it
-	       		        	if(!headerRow.endsWith(System.lineSeparator()))
-	       		        	{ 
-	       		        		content.append(System.lineSeparator());
-	       		        	}
-	       		        }
-	       		       
-	       		       // the data was changed. we reconstruct the original row and using the defined separator
-       		    	   // append to the buffer
-       		    	   content.append(updatedContent.get());
-                	   
-	       		       final byte[] data = content.toString().getBytes();
-                	   out.write(data);
-                   }
-               });
-        }
-    	
-        // put the map to the flow file
-        flowFile = session.putAllAttributes(flowFile, propertyMap);
-        
-        // if the user configured detailed results, then we clone the flow file, add the ruleengine message for 
-        // each rule to the properties and transmit the flow file to the detailed relationship
-        if(context.getProperty(ATTRIBUTE_OUTPUT_DETAILED_RESULTS).getValue().equals("true"))
-        {
-			// get the configured output type
-        	String ouputType = context.getProperty(ATTRIBUTE_OUTPUT_DETAILED_RESULTS_TYPE).getValue(); 
-        	
-        	// we need to create a flow file only, if the ruleengine results are according to the output type settings
-        	if(ouputType.equals(OUTPUT_TYPE_ALL_GROUPS_ALL_RULES) || (ouputType.equals(OUTPUT_TYPE_FAILED_GROUPS_ALL_RULES) && ruleEngine.getNumberOfGroupsFailed()>0) || (ouputType.equals(OUTPUT_TYPE_FAILED_GROUPS_FAILED_RULES) && ruleEngine.getNumberOfGroupsFailed()>0) || (ouputType.equals(OUTPUT_TYPE_FAILED_GROUPS_PASSED_RULES) && ruleEngine.getNumberOfGroupsFailed()>0) || (ouputType.equals(OUTPUT_TYPE_PASSED_GROUPS_ALL_RULES) && ruleEngine.getNumberOfGroupsPassed()>0) || (ouputType.equals(OUTPUT_TYPE_PASSED_GROUPS_FAILED_RULES) && ruleEngine.getNumberOfGroupsPassed()>0 || (ouputType.equals(OUTPUT_TYPE_PASSED_GROUPS_PASSED_RULES) && ruleEngine.getNumberOfGroupsPassed()>0)))
-        	{
-        		// create a clone of the original flow file
-				FlowFile detailedFlowFile = session.clone(flowFile);
-	
-				// append a separator and the ruleengine message from the rule execution
-				detailedFlowFile = session.write(detailedFlowFile, new OutputStreamCallback() 
-	        	{
-	                   @Override
-	                   public void process(final OutputStream out) throws IOException 
-	                   {
-	                	   	StringBuffer detailedFlowFileContent = new StringBuffer();
-
-	                	   	// add the header if there is one
-	                	   	if(context.getProperty(ATTRIBUTE_HEADER_PRESENT).getValue().equals("true") && headerFromContent.get()!=null && headerFromContent.get().getNumberOfFields()>0)
-		       		        {
-		       		        	String headerRow = headerFromContent.get().getFieldNamesWithSeparator();
-		       		        	detailedFlowFileContent.append(headerRow); 
-		       		        	// if the header row does not have a line separator at the end then add it
-		       		        	if(!headerRow.endsWith(System.lineSeparator()))
-		       		        	{ 
-		       		        		detailedFlowFileContent.append(System.lineSeparator());
-		       		        	}
-		       		        }
-	                	   	
-	                	   	// loop over all groups
-	                	   	for(int f=0;f<ruleEngine.getGroups().size();f++)
-	        	            {
-	                	   		// get a rulegroup
-	        	            	RuleGroup group = ruleEngine.getGroups().get(f);
-	        	            	
-	        	            	try
-	        	            	{
-	        		            	// loop over all subgroups of the group
-	        		        		for(int g=0;g<group.getSubGroups().size();g++)
-	        		                {
-	        		            		RuleSubGroup subgroup = group.getSubGroups().get(g);
-	        		            		// get the execution results of the subgroup
-	        		            		ArrayList <RuleExecutionResult> results = subgroup.getExecutionCollection().getResults();
-	        		            		// loop over all results
-	        		            		for (int h= 0;h< results.size();h++)
-	        		                    {
-	        		            			// one result of one rule execution
-	        		            			RuleExecutionResult result = results.get(h);
-	        		            			// the corresponding rule that was executed
-	        		            			XmlRule rule = result.getRule();
-	                	   	
-	        		            			// check if rulegroup and rule are according to the output type settings
-	        		            			// otherwise we don't need to output the data
-	        		            			if(ouputType.equals(OUTPUT_TYPE_ALL_GROUPS_ALL_RULES) || (ouputType.equals(OUTPUT_TYPE_FAILED_GROUPS_FAILED_RULES) && group.getFailed()==1 && rule.getFailed()==1) || (ouputType.equals(OUTPUT_TYPE_FAILED_GROUPS_PASSED_RULES) && group.getFailed()==1 && rule.getFailed()==0)|| ouputType.equals(OUTPUT_TYPE_FAILED_GROUPS_ALL_RULES) && group.getFailed()==1 || (ouputType.equals(OUTPUT_TYPE_PASSED_GROUPS_FAILED_RULES) && group.getFailed()==0 && rule.getFailed()==1)  || (ouputType.equals(OUTPUT_TYPE_PASSED_GROUPS_PASSED_RULES) && group.getFailed()==0 && rule.getFailed()==0) || (ouputType.equals(OUTPUT_TYPE_PASSED_GROUPS_ALL_RULES) && group.getFailed()==0))
-	        		            			{
-	        		            				// append the content 
-	        		   				        	detailedFlowFileContent.append(updatedContent.get());
-	        		   				        	// add a separator
-	        			   					    detailedFlowFileContent.append(separator);
-	        			   					    
-	        			   					    // append basic information to each row of the flowfile
-	        			   					    // so that the rulegroup, subgroup and rule can be identified
-	        			   					    detailedFlowFileContent.append( group.getId());
-	        			   					    detailedFlowFileContent.append(separator);
-	        			   				        
-	        			   					    detailedFlowFileContent.append( group.getFailed());
-	        			   					    detailedFlowFileContent.append(separator);
-	        			   					    
-	        			   					    detailedFlowFileContent.append( subgroup.getId());
-	        			   					    detailedFlowFileContent.append(separator);
-	        			   					    
-	        			   					    detailedFlowFileContent.append( subgroup.getFailed());
-	        			   					    detailedFlowFileContent.append(separator);
-	        			   					    
-	        			   					    detailedFlowFileContent.append( subgroup.getLogicalOperatorSubGroupAsString());
-	        			   					    detailedFlowFileContent.append(separator);
-	        			   					    
-	        			   					    detailedFlowFileContent.append(subgroup.getLogicalOperatorRulesAsString());
-	        			   					    detailedFlowFileContent.append(separator);
-	        			   					    
-	        			   					    detailedFlowFileContent.append(rule.getId());
-	        			   					    detailedFlowFileContent.append(separator);
-	        			   				        
-	        			   					    detailedFlowFileContent.append(rule.getFailed());
-	        			   					    detailedFlowFileContent.append(separator);
-	        			   					    
-	        			   					    // append the resulting ruleengine message of the rule execution
-	        			   					    detailedFlowFileContent.append(result.getMessage());
-	        			   					    
-	        			   					    // add line separator except last line
-	        			   					    if(h<results.size()-1)
-	        			   					    {
-	        			   					    	detailedFlowFileContent.append(System.lineSeparator());
-	        			   					    }
-	        		            			}
-	        		                    }
-		        	            	}
-	        	            	}
-	        	            	catch(Exception ex)
-	        	            	{
-	        	            		ex.printStackTrace();
-	        	            	}
-		   					}
-		               	   
-		   					// write data to content
-		   					final byte[] data = detailedFlowFileContent.toString().getBytes();
-		   					out.write(data);
-	                   }
-	            });
-				
-				// transfer the flow file
-		        session.transfer(detailedFlowFile, DETAILED_RESULTS);
-		        
-				// for provenance reporting
-				session.getProvenanceReporter().route(detailedFlowFile, DETAILED_RESULTS);
-        	}
-        }
-
-        // for provenance reporting
-        session.getProvenanceReporter().modifyAttributes(flowFile);
-        
-        // transfer the flow file
-        session.transfer(flowFile, SUCCESS);
-
-        // clear the collections of ruleengine results
-    	ruleEngine.getRuleExecutionCollection().clear();
+		}
+	   	return row.toString();
     }
-    
+
+    /**
+     * re-constructs a row of CSV data from the RowFieldCollecion.
+     * 
+     * when the ruleengine runs, actions may update the data based on the results of the business rules. this method
+     * re-constructs the original row with the updated values from the rule engine and the given separator.     * 
+     * 
+     * @param rowFieldCollection	RowFieldCollection that was used with the ruleengine run
+     * @return						a row of data with the updated data
+     * @throws Exception			exception when the row can not be constructed
+     */
     private String getResultRow(RowFieldCollection rowFieldCollection) throws Exception
     {
     	StringBuffer content = new StringBuffer();
@@ -713,8 +897,16 @@ public class ExecuteRuleEngine extends AbstractProcessor
         }
    		return content.toString();
     }
-
-    private void addRuleEngineProperties(Map<String, String> propertyMap, BusinessRulesEngine ruleEngine) throws Exception
+    
+    /**
+     * adds properties to the given map which contain statistics about the rule engine execution.
+     * 
+     * these properties will be available as flow file attributes.
+     * 
+     * @param propertyMap		the flow file properties
+     * @throws Exception		exception when the ruleengine values can not be determined
+     */
+    private void addRuleEngineProperties(Map<String, String> propertyMap) throws Exception
     {
         // put the  number of  rulegroups in the property map
         propertyMap.put(PROPERTY_RULEENGINE_RULEGROUPS_COUNT, ""+ ruleEngine.getNumberOfGroups());
