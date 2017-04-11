@@ -1,0 +1,34 @@
+<?xml version="1.0" ?>
+<template encoding-version="1.0">
+  <description>Basic ExecuteRuleEngine Example. Reads a CSV file, executes rules against the individual fields of each row and creates a flow file for each row which passed the business logic.</description>
+  <groupId>921717a2-100d-115a-2108-57fb74e1d584</groupId>
+  <name>ExecuteRuleEngine Example</name>
+  <snippet>
+    <labels>
+      <id>921717a3-100d-115a-0000-000000000000</id>
+      <parentGroupId>921717a2-100d-115a-0000-000000000000</parentGroupId>
+      <position>
+        <x>0.0</x>
+        <y>0.0</y>
+      </position>
+      <height>145.58367919921875</height>
+      <label>Sample Flow with the RuleEngine
+
+ 
+- GetFile: Get a CSV File
+- SplitText: Split the CSV file into chunks of rows
+- RuleEngine: Run business rules against the individual fields (the ruleengine splits the CSV row into individual fields) of the row from the CSV file
+- Route OnAttribute: route the flowfile based on if the business rules passed or failed
+- UpdateAttribute: update the filename
+- PutFile: output the CSV rows that passed the business logic to individual files</label>
+      <style>
+        <entry>
+          <key>font-size</key>
+          <value>12px</value>
+        </entry>
+      </style>
+      <width>838.1812744140625</width>
+    </labels>
+  </snippet>
+  <timestamp>04/11/2017 21:30:18 CEST</timestamp>
+</template>
