@@ -75,12 +75,10 @@ import com.datamelt.util.Splitter;
  * an incoming flow file. The results of the ruleengine will be stored in the flow file
  * attributes and may then be used for further decisions/routing in the Nifi flow.
  * <p>
- * The ruleengine uses a project zip file, which was created in the Business Rules Maintenance Tool.
- * This is a web application to construct and orchestrate the business rules logic. The
- * tool allows to export the logic of a project into a single zip file.
+ * The ruleengine uses a project zip file (containing the business logic), which is created using the Business Rules Maintenance Tool.
+ * This is a web application to construct and orchestrate the business rules logic. The tool allows to export the logic of a project into a single zip file.
  * <p>
- * The content of the flow file is expected to be one row of comma separated data. The row
- * is split into its individual fields using the given field separator.
+ * The content of the flow file is expected to be one or multiple rows of comma separated data (CSV). The rows are split into its individual fields using the given field separator.
  * <p>
 
  * @author uwe geercken - last update 2017-04-09
@@ -243,17 +241,17 @@ public class ExecuteRuleEngine extends AbstractProcessor
     
     public static final Relationship SUCCESS = new Relationship.Builder()
             .name(RELATIONSHIP_SUCESS_NAME)
-            .description("The ruleengine results for each row of the incomming flow file.")
+            .description("The ruleengine results for each row of the incomming flow file are routed to this relation")
             .build();
 
     public static final Relationship DETAILED_RESULTS = new Relationship.Builder()
             .name(RELATIONSHIP_DETAILED_OUTPUT_NAME)
-            .description("The ruleengine detailed results of the business rules execution according to the output detailed results type selection.")
+            .description("The ruleengine detailed results of the business rules execution according to the output detailed results type selection are routed to this relation")
             .build();
 
     public static final Relationship FAILURE = new Relationship.Builder()
             .name(RELATIONSHIP_FAILURE_NAME)
-            .description("If the content could not be split or the ruleengine execution resulted in an error the file is route to this destination.")
+            .description("If the content could not be split or the ruleengine execution resulted in an error the file is routed to this relation.")
             .build();
 
     @Override
@@ -368,7 +366,7 @@ public class ExecuteRuleEngine extends AbstractProcessor
     {
         // reset the ruleengine instance
     	ruleEngine = null;
-        getLogger().debug("processor unscheduled - set ruleengine instance to null");
+        getLogger().debug("processor unscheduled - ruleengine instance set to null");
     }
 
     @Override
@@ -451,6 +449,7 @@ public class ExecuteRuleEngine extends AbstractProcessor
 	                    	RowFieldCollection rowFieldCollection = null;
 	                    	try
 	                		{
+	                    		// create RowFieldCollection from the row and the header fields
 	                    		rowFieldCollection = getRowFieldCollection(row,header.get());
 	
 	                    		logger.debug("RowFieldCollection header contains: " + rowFieldCollection.getHeader().getNumberOfFields() + " fields");
@@ -831,7 +830,7 @@ public class ExecuteRuleEngine extends AbstractProcessor
         	}
         }
  	   	
- 	   	// add the results
+ 	   	// append the results
  	   	detailedFlowFileContent.append(getRuleEngineDetails(outputType,row));
     	
     	return detailedFlowFileContent.toString();
@@ -842,7 +841,7 @@ public class ExecuteRuleEngine extends AbstractProcessor
      * content or by specifying the names of the individual fields in the configuration.
      * 
      * if the header is null then the collection is built without a header. in this case the access to the fields from
-     * the ruleengine needs to be done using the field index number (because we do not have the name of the field).
+     * the rules needs to be constructed using the field index number (because we do not have the name of the field).
      * 
      * @param row			a row of CSV data
      * @param header		a HeaderRow object containing the header fields
@@ -895,7 +894,7 @@ public class ExecuteRuleEngine extends AbstractProcessor
             		// get the execution results of the subgroup
             		ArrayList <RuleExecutionResult> results = subgroup.getExecutionCollection().getResults();
             		// loop over all results
-            		for (int h= 0;h< results.size();h++)
+            		for (int h = 0;h < results.size();h++)
                     {
             			// one result of one rule execution
             			RuleExecutionResult result = results.get(h);
@@ -947,7 +946,7 @@ public class ExecuteRuleEngine extends AbstractProcessor
             				row.append(result.getMessage());
 	   					    
 	   					    // add line separator except last line
-	   					    if(h<results.size()-1)
+	   					    if(h<results.size()-1 || g<group.getSubGroups().size()-1)
 	   					    {
 	   					    	row.append(System.lineSeparator());
 	   					    }
